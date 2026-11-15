@@ -1,4 +1,4 @@
-# Built A Friend? — a sparring partner for answer-first communication
+# Built A Friend?
 
 Talk to **Blitzen** for 90 seconds about something you're actually working on: an update, a recommendation, an ask. Blitzen is warm, encouraging and on your side, and listens like a busy senior leader between meetings.
 
