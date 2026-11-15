@@ -1,0 +1,15 @@
+[project]
+name = "devfest-agent"
+version = "0.1.0"
+description = "Built A Friend? — a warm AI sparring partner that doesn't cave. Google ADK + Gemini Live."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "google-genai>=1.20",
+    "google-adk>=2.8",
+    "python-dotenv>=1.0",
+]
+
+[tool.uv]
+package = false
