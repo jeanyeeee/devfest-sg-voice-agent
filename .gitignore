@@ -6,3 +6,4 @@ __pycache__/
 .adk/
 sparring/results/
 sparring/.cache/
+.claude/skills/

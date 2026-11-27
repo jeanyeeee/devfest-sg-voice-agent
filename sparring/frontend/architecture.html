@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en" data-motion>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Architecture · DevFest 2026 Voice Agent</title>
+<meta name="theme-color" content="#F7F4EF" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="top">
+      <a class="brand" href="/" aria-label="DevFest 2026 Voice Agent, back to the telephone">
+        <span class="brand__mark" aria-hidden="true">{<span>∗</span>}</span>
+        <span><span class="brand__name">DevFest 2026</span><span class="brand__sub">Voice Agent</span></span>
+      </a>
+      <nav class="seg" aria-label="Views">
+        <a class="seg__item" href="/">Voice</a>
+        <a class="seg__item is-on" href="/architecture.html" aria-current="page">Architecture <svg class="m-arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 11 11 5M6 5h5v5" /></svg></a>
+      </nav>
+      <div class="status"><span class="dot" id="status-dot"></span><span id="status-text">Ready when you are</span></div>
+    </header>
+
+    <main class="arch">
+      <p class="eyebrow">Under the receiver</p>
+      <h1 class="display" data-enter>What happens when you speak.</h1>
+      <p class="lede" data-enter>One live conversation. Audio in both directions.<br />A friend that decides by itself when to use a tool.</p>
+
+      <div class="flow">
+        <article class="node">
+          <div class="node__k">01 / Browser</div>
+          <h2 class="node__t">Your microphone</h2>
+          <p class="node__d">The handset’s audio, turned into 16 kHz mono PCM by an AudioWorklet.</p>
+          <div class="node__f">pcm-processor.js</div>
+        </article>
+        <div class="swap" aria-hidden="true"><svg viewBox="0 0 32 20"><path d="M2 6h26M23 1l5 5-5 5M30 14H4M9 9l-5 5 5 5" /></svg></div>
+        <article class="node">
+          <div class="node__k">02 / Transport</div>
+          <h2 class="node__t">FastAPI /ws</h2>
+          <p class="node__d">One WebSocket per call carries audio, transcripts and every tool call.</p>
+          <div class="node__f">server.py</div>
+        </article>
+        <div class="swap" aria-hidden="true"><svg viewBox="0 0 32 20"><path d="M2 6h26M23 1l5 5-5 5M30 14H4M9 9l-5 5 5 5" /></svg></div>
+        <article class="node">
+          <div class="node__k">03 / Agent</div>
+          <h2 class="node__t">ADK Runner</h2>
+          <p class="node__d">Builds your friend from the voice and persona you picked. Tools run mid-call.</p>
+          <div class="node__f">run_live()</div>
+        </article>
+        <div class="swap" aria-hidden="true"><svg viewBox="0 0 32 20"><path d="M2 6h26M23 1l5 5-5 5M30 14H4M9 9l-5 5 5 5" /></svg></div>
+        <article class="node">
+          <div class="node__k">04 / Voice</div>
+          <h2 class="node__t">Gemini Live</h2>
+          <p class="node__d">Native voice streams back at 24 kHz. You can interrupt it.</p>
+          <div class="node__f">Bidirectional audio</div>
+        </article>
+      </div>
+      <div class="back-line">
+        <svg viewBox="0 0 28 22" aria-hidden="true"><path d="M3 2v11h20M18 8l5 5-5 5" /></svg>
+        <span>24 kHz voice back to the handset · transcription back to the conversation</span>
+        <svg viewBox="0 0 28 22" aria-hidden="true"><path d="M25 2v11H5M10 8l-5 5 5 5" /></svg>
+      </div>
+
+      <div class="keys">
+        <section>
+          <div class="key__k">Stations 1 + 2 / Voice and persona</div>
+          <h2 class="key__t">One voice, one instruction.</h2>
+          <p class="key__d">The voice is the speech config. The persona is the system instruction, with shared rules in <code>BASE</code>.</p>
+          <div class="codebox" id="build-code">build_friend("hype_friend",
+             "elevator_cto")</div>
+        </section>
+        <section>
+          <div class="key__k">Station 3 / Superpowers</div>
+          <h2 class="key__t">Tools it calls by itself.</h2>
+          <p class="key__d">Search and code run as <code>AgentTool</code> sub-agents beside the custom <code>make_friend_card</code>. Nobody tells the friend when to use them.</p>
+          <div class="live" id="live-tool">Waiting for a real tool call.</div>
+        </section>
+        <section>
+          <div class="key__k">Free play / Concession gate</div>
+          <h2 class="key__t">Agreement needs evidence.</h2>
+          <p class="key__d">With Blitzen, a callback checks every <code>concede</code> quote against your words, its structure and its order before a point lands.</p>
+          <div class="live" id="live-gate">Waiting for a real gate verdict.</div>
+          <p class="key__small">A separate referee agent is future work.</p>
+        </section>
+      </div>
+
+      <div class="arch-foot">
+        <span><span class="dot dot--small"></span><span id="foot-text">Start a call or watch the demo to see the tools and gate update here.</span></span>
+        <a href="/">Back to the telephone <svg class="m-arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 11 11 5M6 5h5v5" /></svg></a>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // Live mirror of the call screen (same browser): BroadcastChannel from main.js.
+    const $ = (id) => document.getElementById(id);
+    const NAMES = { know_it_all: "Know-it-all", math_whiz: "Math Whiz", make_friend_card: "Friend Card" };
+    const text = (el, s) => { el.textContent = ""; el.append(...s); };
+    const b = (s) => { const e = document.createElement("b"); e.textContent = s; return e; };
+    function onEvent(m) {
+      if (!m || !m.type) return;
+      if (m.type === "start") {
+        $("status-dot").className = "dot is-live"; $("status-text").textContent = "On the call";
+        $("build-code").textContent = `build_friend("${m.voice?.id}",\n             "${m.persona?.id}")`;
+        $("foot-text").textContent = `${(m.persona?.name || "").replace(/ · Free play$/, "")} is on the line in the ${m.voice?.label} voice.`;
+      } else if (m.type === "action" && m.tool === "concede") {
+        text($("live-gate"), [b(`concede("${m.args?.concern_id}") `), `${m.status === "blocked" ? "blocked" : "landed"}: ${m.reason || ""}`]);
+      } else if (m.type === "action") {
+        const name = NAMES[m.tool] || m.tool;
+        if (m.phase === "call") text($("live-tool"), [b(`${m.tool}()`), ` · ${name} is working…`]);
+        else {
+          let r = typeof m.result === "string" ? m.result : m.result?.card ? `card for ${m.result.card.friend_name}` : JSON.stringify(m.result);
+          if (r.length > 140) r = r.slice(0, 137) + "…";
+          text($("live-tool"), [b(`${m.tool}()`), ` → ${r}`]);
+        }
+      } else if (m.type === "end") {
+        $("status-dot").className = "dot"; $("status-text").textContent = "Call ended";
+      }
+    }
+    try { new BroadcastChannel("devfest-voice").onmessage = (e) => onEvent(e.data); } catch {}
+  </script>
+</body>
+</html>

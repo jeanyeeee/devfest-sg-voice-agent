@@ -1,278 +1,168 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-motion>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Build A Friend</title>
-<style>
-  :root {
-    --bg: #12100e; --panel: rgba(255,248,238,0.035); --panel-hi: rgba(255,248,238,0.07);
-    --line: rgba(239,230,218,0.12); --line-hi: rgba(245,185,122,0.55);
-    --ink: #efe6da; --muted: rgba(239,230,218,0.6); --faint: rgba(239,230,218,0.3);
-    --amber: #F5B97A; --amber-deep: #E8935A; --ok: #9cc9a0; --no: #e5887a; --sky: #8fb8e0;
-    --tier-off: rgba(239,230,218,0.07); --tier-edge: rgba(239,230,218,0.16);
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; }
-  body {
-    min-height: 100vh; overflow-x: hidden; color: var(--ink); background:
-      radial-gradient(ellipse at 50% -10%, rgba(245,185,122,0.12) 0%, transparent 55%), var(--bg);
-    font-family: ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
-    display: grid; grid-template-rows: auto 1fr auto;
-  }
-  [hidden] { display: none !important; }
-
-  /* ---------- header ---------- */
-  header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 28px; }
-  .brand { font-size: 11px; letter-spacing: 0.28em; text-transform: uppercase; color: var(--faint); min-width: 120px; }
-  .steps { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--faint); }
-  .steps .s { display: flex; align-items: center; gap: 6px; }
-  .steps .n { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line); display: grid; place-items: center; font-size: 11px; }
-  .steps .s.on { color: var(--ink); } .steps .s.on .n { background: var(--amber); color: #2a1a0c; border-color: var(--amber); font-weight: 600; }
-  .steps .s.done .n { border-color: var(--amber); color: var(--amber); }
-  .steps .sep { width: 18px; height: 1px; background: var(--line); }
-  .clock { font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 300; letter-spacing: 0.06em; color: var(--muted); min-width: 120px; text-align: right; }
-  .clock.low { color: var(--no); }
-
-  main { padding: 8px 28px; min-width: 0; }
-  .screen { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; gap: 22px; }
-  h1 { margin: 6px 0 0; font-size: clamp(26px, 4vw, 40px); font-weight: 600; letter-spacing: -0.01em; text-align: center; }
-  .lede { margin: 0; color: var(--muted); font-size: 15px; text-align: center; max-width: 560px; line-height: 1.5; }
-  .lede code { color: var(--amber); }
-
-  /* ---------- picker cards ---------- */
-  .cards { width: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
-  .pick { position: relative; text-align: left; background: var(--panel); color: var(--ink); border: 1px solid var(--line);
-    border-radius: 18px; padding: 22px; cursor: pointer; display: flex; flex-direction: column; gap: 8px;
-    font: inherit; transition: border-color .2s, background .2s, transform .15s; min-height: 170px; }
-  .pick:hover, .pick:focus-visible { border-color: var(--line-hi); background: var(--panel-hi); transform: translateY(-2px); outline: none; }
-  .pick .emoji { font-size: 34px; line-height: 1; }
-  .pick .t { font-size: 19px; font-weight: 600; }
-  .pick .d { font-size: 14px; color: var(--muted); line-height: 1.45; }
-  .pick .tag { margin-top: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--amber); }
-  .pick.free { border-style: dashed; }
-  .play { display: grid; place-items: center; cursor: pointer; position: absolute; top: 16px; right: 16px; width: 38px; height: 38px; padding: 0; border-radius: 50%;
-    background: transparent; color: var(--amber); border: 1px solid var(--line); font-size: 14px; }
-  .play:hover { border-color: var(--amber); }
-  .play.on { background: var(--amber); color: #2a1a0c; }
-  .back { background: transparent; color: var(--muted); border: 0; padding: 6px 10px; font-size: 13px; }
-
-  /* ---------- the phone ---------- */
-  .ring { display: flex; flex-direction: column; align-items: center; gap: 26px; padding-top: 4vh; }
-  .phone { width: 180px; height: 180px; border-radius: 50%; display: grid; place-items: center; font-size: 76px;
-    background: radial-gradient(circle, rgba(245,185,122,0.22), rgba(245,185,122,0.05)); border: 1px solid var(--line-hi);
-    animation: ringing 1.2s ease-in-out infinite; }
-  @keyframes ringing { 0%,100% { transform: rotate(0); box-shadow: 0 0 0 0 rgba(245,185,122,0.35); }
-    10% { transform: rotate(-12deg); } 20% { transform: rotate(12deg); } 30% { transform: rotate(-8deg); } 40% { transform: rotate(0); box-shadow: 0 0 0 26px rgba(245,185,122,0); } }
-  .caller { text-align: center; }
-  .caller .t { font-size: 26px; font-weight: 600; }
-  .caller .d { color: var(--muted); font-size: 14px; margin-top: 6px; }
-  .big { font-size: 18px; padding: 18px 40px; }
-
-  /* ---------- live call ---------- */
-  .call { width: 100%; display: grid; grid-template-columns: 1fr minmax(300px, 420px) 1fr; gap: 28px; align-items: center; }
-  .call > * { min-width: 0; }
-  .side { align-self: stretch; display: flex; flex-direction: column; gap: 10px; min-height: 0; max-height: 62vh; }
-  .side-title { font-size: 10px; letter-spacing: 0.28em; text-transform: uppercase; color: var(--faint); }
-  .center { display: flex; flex-direction: column; align-items: center; gap: 18px; }
-  .avatar { position: relative; width: 150px; height: 150px; border-radius: 50%; display: grid; place-items: center; font-size: 64px;
-    background: var(--panel); border: 1px solid var(--line); transition: box-shadow .25s, border-color .25s; }
-  .avatar.listening { border-color: rgba(156,201,160,0.6); box-shadow: 0 0 0 6px rgba(156,201,160,0.12); }
-  .avatar.speaking { border-color: var(--amber); animation: talk 1s ease-in-out infinite; }
-  .avatar.thinking { border-color: var(--sky); box-shadow: 0 0 0 8px rgba(143,184,224,0.15); }
-  @keyframes talk { 0%,100% { box-shadow: 0 0 0 6px rgba(245,185,122,0.2); } 50% { box-shadow: 0 0 0 16px rgba(245,185,122,0.05); } }
-  .who-name { font-size: 20px; font-weight: 600; text-align: center; }
-  .who-role { font-size: 13px; color: var(--muted); text-align: center; margin-top: 2px; }
-  .prompt { text-align: center; font-size: 15px; line-height: 1.5; color: var(--muted); max-width: 400px; min-height: 24px; }
-  .prompt b { color: var(--ink); font-weight: 600; }
-
-  /* the pyramid (Blitzen only): one triangle cut into three tiers */
-  .pyramid { width: 100%; max-width: 360px; aspect-ratio: 1.15 / 1; display: grid; grid-template-rows: 1fr 1fr 1fr; gap: 6px; }
-  .tier { position: relative; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 14%;
-    background: var(--tier-off); transition: background .6s ease; }
-  .tier.t1 { clip-path: polygon(50% 0%, 66.67% 100%, 33.33% 100%); padding-bottom: 10%; }
-  .tier.t2 { clip-path: polygon(33.33% 0, 66.67% 0, 83.33% 100%, 16.67% 100%); }
-  .tier.t3 { clip-path: polygon(16.67% 0, 83.33% 0, 100% 100%, 0% 100%); }
-  .tier .lbl { position: relative; z-index: 1; font-size: 12px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--faint); transition: color .4s; }
-  .tier.t1 .lbl { font-size: 11px; letter-spacing: 0.16em; }
-  .tier.current { background: rgba(245,185,122,0.12); }
-  .tier.current .lbl { color: var(--amber); }
-  .tier.landed { background: linear-gradient(180deg, var(--amber), var(--amber-deep)); }
-  .tier.landed .lbl { color: #2a1a0c; font-weight: 600; }
-  .tier.shake { animation: shake .45s; }
-  @keyframes shake { 20%,60% { transform: translateX(-5px); } 40%,80% { transform: translateX(5px); } }
-  .quotes { width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 6px; }
-  .quote { font-size: 13px; line-height: 1.45; border-left: 2px solid var(--amber); padding: 2px 0 2px 10px; }
-  .quote span { display: block; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--amber); margin-bottom: 2px; }
-
-  /* transcript + superpower log */
-  .scroll { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; }
-  .line { font-size: 13.5px; line-height: 1.5; color: var(--muted); }
-  .line b { display: block; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; font-weight: 500; color: var(--faint); margin-bottom: 1px; }
-  .line.persona { color: var(--ink); }
-  .line.persona b { color: var(--amber); }
-  .act { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--sky); border-radius: 10px; padding: 10px 12px;
-    font-size: 13px; line-height: 1.45; animation: pop .35s ease; word-break: break-word; }
-  @keyframes pop { from { transform: translateY(6px); opacity: 0; } }
-  .act .h { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-  .act .fn { margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: var(--faint); font-weight: 400; }
-  .act .q { color: var(--muted); margin-top: 4px; }
-  .act .r { margin-top: 6px; color: var(--ink); }
-  .act .r.pending { color: var(--faint); font-style: italic; }
-  .act.card-act { border-left-color: var(--amber); }
-  .act.ok { border-left-color: var(--ok); } .act.ok .v { color: var(--ok); }
-  .act.blocked { border-left-color: var(--no); } .act.blocked .v { color: var(--no); font-weight: 600; }
-  .empty { font-size: 12.5px; color: var(--faint); font-style: italic; line-height: 1.5; }
-
-  /* ---------- footer ---------- */
-  footer { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 16px 26px; }
-  button { background: var(--amber); color: #2a1a0c; border: 0; border-radius: 999px; padding: 13px 26px;
-    font-size: 13px; font-weight: 600; letter-spacing: 0.06em; cursor: pointer; transition: transform .15s, opacity .2s; font-family: inherit; }
-  button:hover { transform: translateY(-1px); }
-  button:disabled { opacity: 0.55; cursor: default; transform: none; }
-  button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
-  button.hang { background: var(--no); color: #2a0f0c; }
-  .hint { font-size: 11px; color: var(--faint); letter-spacing: 0.04em; text-align: center; }
-
-  /* ---------- setup (?setup=1): pick the USB handset ---------- */
-  .setup { width: 100%; max-width: 640px; display: grid; grid-template-columns: auto 1fr; gap: 10px 14px; align-items: center;
-    background: var(--panel); border: 1px dashed var(--line); border-radius: 14px; padding: 16px; font-size: 13px; color: var(--muted); }
-  .setup select { width: 100%; background: #1b1714; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: inherit; }
-  .setup .row-full { grid-column: 1 / -1; display: flex; gap: 10px; align-items: center; }
-
-  /* ---------- end card ---------- */
-  .card-wrap { position: fixed; inset: 0; background: rgba(10,8,7,0.75); backdrop-filter: blur(6px);
-    display: none; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
-  .card-wrap.show { display: flex; }
-  .card { width: 100%; max-width: 520px; max-height: calc(100vh - 32px); overflow-y: auto; background: #1b1714; border: 1px solid var(--line); border-radius: 20px; padding: 28px; }
-  .friend { border-radius: 16px; padding: 24px; margin-bottom: 18px; color: #2a1a0c;
-    background: linear-gradient(140deg, #F8CB95, var(--amber) 45%, var(--amber-deep)); position: relative; overflow: hidden; }
-  .friend::after { content: ""; position: absolute; right: -40px; top: -40px; width: 160px; height: 160px; border-radius: 50%; background: rgba(255,255,255,0.18); }
-  .friend .k { font-size: 10px; letter-spacing: 0.26em; text-transform: uppercase; opacity: 0.7; }
-  .friend .name { font-size: 28px; font-weight: 700; margin: 6px 0 12px; letter-spacing: -0.01em; }
-  .friend .catch { font-size: 17px; font-style: italic; line-height: 1.4; }
-  .friend .verdict { margin-top: 14px; font-size: 14px; font-weight: 600; }
-  .friend .by { margin-top: 16px; font-size: 11px; opacity: 0.75; }
-  .card h2 { margin: 0 0 4px; font-size: 20px; font-weight: 600; }
-  .card .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
-  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
-  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
-  .stat .n { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .stat .k { font-size: 11px; color: var(--muted); letter-spacing: 0.06em; margin-top: 2px; }
-  .card .row { font-size: 13px; line-height: 1.5; margin: 10px 0; }
-  .card .row span { display: block; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--faint); margin-bottom: 2px; }
-  .card .fix span { color: var(--no); } .card .good span { color: var(--ok); }
-  .card .actions { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
-  .toast { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); background: #1b1714; border: 1px solid var(--line-hi);
-    border-radius: 12px; padding: 10px 16px; font-size: 13px; z-index: 5; animation: pop .35s ease; max-width: calc(100vw - 32px); }
-
-  @media (max-width: 980px) {
-    header { padding: 16px; }
-    .brand, .steps .t { display: none; }
-    main { padding: 8px 16px; }
-    .call { grid-template-columns: minmax(0, 1fr); }
-    .center { order: -1; }
-    .side { max-height: 32vh; }
-  }
-</style>
+<title>DevFest 2026 · Voice Agent</title>
+<meta name="theme-color" content="#F7F4EF" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <header>
-    <div class="brand">build a friend</div>
-    <div class="steps" id="steps">
-      <div class="s" data-step="voice"><span class="n">1</span><span class="t">Voice</span></div><div class="sep"></div>
-      <div class="s" data-step="persona"><span class="n">2</span><span class="t">Persona</span></div><div class="sep"></div>
-      <div class="s" data-step="call"><span class="n">3</span><span class="t">Call</span></div>
-    </div>
-    <div id="clock" class="clock"></div>
-  </header>
+  <a class="skip" href="#stage">Skip to the call</a>
+  <div class="page">
+    <header class="top">
+      <a class="brand" href="/" aria-label="DevFest 2026 Voice Agent, start over">
+        <span class="brand__mark" aria-hidden="true">{<span>∗</span>}</span>
+        <span><span class="brand__name">DevFest 2026</span><span class="brand__sub">Voice Agent</span></span>
+      </a>
+      <nav class="seg" aria-label="Views">
+        <a class="seg__item is-on" href="/" aria-current="page">Voice</a>
+        <a class="seg__item" href="/architecture.html">Architecture <svg class="m-arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 11 11 5M6 5h5v5" /></svg></a>
+      </nav>
+      <div class="status" id="status"><span class="dot" id="status-dot"></span><span id="status-text">Ready when you are</span></div>
+    </header>
 
-  <main>
-    <!-- Station 1: voice -->
-    <section class="screen" id="s-voice">
-      <h1>Pick a voice</h1>
-      <p class="lede">This is the Gemini Live <code>speech_config</code>. Tap ▶ to hear it, tap the card to choose it.</p>
-      <div class="cards" id="voice-cards"></div>
-      <div class="setup" id="setup" hidden>
-        <label for="mic">Microphone</label><select id="mic"></select>
-        <label for="speaker">Speaker</label><select id="speaker"></select>
-        <div class="row-full"><button class="ghost" id="test-ring">Test ring</button><span id="setup-note"></span></div>
-      </div>
-    </section>
-
-    <!-- Station 2: persona -->
-    <section class="screen" id="s-persona" hidden>
-      <h1>Pick a persona</h1>
-      <p class="lede">This is the agent's <code>instruction</code>. Every persona gets the same superpowers:
-        <code>know_it_all</code>, <code>math_whiz</code> and <code>make_friend_card</code>.</p>
-      <div class="cards" id="persona-cards"></div>
-      <button class="back" id="back-voice">← change voice</button>
-    </section>
-
-    <!-- Station 3: the phone -->
-    <section class="screen" id="s-ring" hidden>
-      <div class="ring">
-        <div class="phone">📞</div>
-        <div class="caller"><div class="t" id="caller-name"></div><div class="d" id="caller-sub"></div></div>
-        <button class="big" id="pickup">Pick up</button>
-        <div class="hint">pick up the handset, then press <b>Pick up</b> (or Space)</div>
-        <button class="back" id="back-persona">← change persona</button>
-      </div>
-    </section>
-
-    <section class="screen" id="s-call" hidden>
-      <div class="call">
-        <section class="side">
-          <div class="side-title">conversation</div>
-          <div id="transcript" class="scroll"><div class="empty">Say hi. Interrupt any time, just like a real call.</div></div>
-        </section>
-        <section class="center">
-          <div class="avatar" id="avatar"></div>
-          <div><div class="who-name" id="who-name"></div><div class="who-role" id="who-role"></div></div>
-          <div id="prompt" class="prompt"></div>
-          <div class="pyramid" id="pyramid" hidden>
-            <div class="tier t1" id="tier-answer"><span class="lbl">Answer</span></div>
-            <div class="tier t2" id="tier-because"><span class="lbl">Because</span></div>
-            <div class="tier t3" id="tier-so_what"><span class="lbl">So what</span></div>
+    <main class="grid">
+      <!-- left: the conversation -->
+      <section class="col col--left" aria-label="Conversation">
+        <div class="col__head"><h2>Conversation</h2><span class="mono" id="turns">00 turns</span></div>
+        <div class="convo" id="transcript">
+          <div class="empty" id="convo-empty">
+            <div class="empty__quote" aria-hidden="true">“</div>
+            <p class="empty__line" id="empty-line">Pick a voice.<br />Pick a friend. Pick up the phone.</p>
+            <p class="empty__sub">Your words and the agent’s replies will appear here when you call.</p>
           </div>
-          <div class="quotes" id="quotes" hidden></div>
-        </section>
-        <section class="side">
-          <div class="side-title">superpowers · tool calls</div>
-          <div id="actionlog" class="scroll"><div class="empty">When your friend decides to use a superpower, the ADK tool call shows up here.</div></div>
-        </section>
-      </div>
-    </section>
-  </main>
+        </div>
+        <div class="col__foot"><span class="dot dot--small"></span>Live transcription</div>
+      </section>
 
-  <footer>
-    <button class="hang" id="hangup" hidden>Hang up</button>
-    <div class="hint" id="foot-hint">headset on · about 90 seconds a call</div>
-  </footer>
+      <!-- centre: the stage (voice → persona → phone → call) -->
+      <section class="col col--center" id="stage" aria-live="polite">
+        <div class="steps" id="steps" aria-label="Booth steps">
+          <span data-step="voice">01 Voice</span><span data-step="persona">02 Persona</span><span data-step="call">03 Call</span>
+        </div>
 
-  <div class="card-wrap" id="card">
-    <div class="card">
+        <!-- step 1 -->
+        <div class="stage" id="s-voice">
+          <p class="eyebrow">Step one</p>
+          <h1 class="display" data-enter>Pick a voice.</h1>
+          <p class="lede" data-enter>This is the Gemini Live speech config.<br />Tap play to hear it, tap the row to choose it.</p>
+          <ol class="rows rows--pick" id="voice-cards"></ol>
+        </div>
+
+        <!-- step 2 -->
+        <div class="stage" id="s-persona" hidden>
+          <p class="eyebrow">Step two</p>
+          <h1 class="display">Pick a friend.</h1>
+          <p class="lede">This is the agent’s instruction. Every friend gets the same three superpowers.</p>
+          <ol class="rows rows--pick" id="persona-cards"></ol>
+          <button class="link-btn" id="back-voice"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 4 6 8l4 4" /></svg>Change the voice</button>
+        </div>
+
+        <!-- step 3: the phone -->
+        <div class="stage stage--phone" id="s-phone" hidden>
+          <p class="eyebrow" id="phone-eyebrow">A conversation worth having</p>
+          <h1 class="display" id="phone-title">Ready to talk?</h1>
+          <p class="lede" id="phone-lede"></p>
+          <div class="phone" id="phone">
+            <svg class="phone__svg" viewBox="0 0 260 560" aria-hidden="true">
+              <defs>
+                <linearGradient id="hs" x1="0" x2="1" y1="0" y2="0">
+                  <stop offset="0" stop-color="#5E1414" /><stop offset=".35" stop-color="#9B2424" />
+                  <stop offset=".6" stop-color="#7E1C1C" /><stop offset="1" stop-color="#4A0F0F" />
+                </linearGradient>
+                <radialGradient id="cup" cx=".35" cy=".3" r=".9">
+                  <stop offset="0" stop-color="#B53A3A" /><stop offset=".55" stop-color="#8A1F1F" /><stop offset="1" stop-color="#4E1010" />
+                </radialGradient>
+                <filter id="soft" x="-30%" y="-10%" width="160%" height="130%">
+                  <feDropShadow dx="10" dy="16" stdDeviation="12" flood-color="#3a1a14" flood-opacity=".22" />
+                </filter>
+              </defs>
+              <g class="cord" fill="none" stroke="#8E2222" stroke-width="5" stroke-linecap="round">
+                <ellipse cx="128" cy="6" rx="13" ry="5" /><ellipse cx="128" cy="22" rx="13" ry="5" />
+                <ellipse cx="128" cy="38" rx="13" ry="5" /><ellipse cx="128" cy="54" rx="13" ry="5" />
+                <ellipse cx="128" cy="70" rx="13" ry="5" /><ellipse cx="128" cy="86" rx="13" ry="5" />
+                <ellipse cx="128" cy="102" rx="13" ry="5" /><ellipse cx="128" cy="118" rx="13" ry="5" />
+                <ellipse cx="128" cy="134" rx="13" ry="5" /><ellipse cx="128" cy="150" rx="13" ry="5" />
+                <ellipse cx="129" cy="164" rx="14" ry="6" />
+                <path d="M130 170c18 14 20 46 8 80-6 18-14 30-24 38" stroke-width="3.5" />
+              </g>
+              <g class="handset" filter="url(#soft)">
+                <path d="M92 300c-22 30-20 92-6 150 8 34 4 52-6 70" fill="none" stroke="url(#hs)" stroke-width="40" stroke-linecap="round" />
+                <path d="M86 330c-14 34-12 80-2 122 6 28 4 44-2 56" fill="none" stroke="#fff" stroke-opacity=".12" stroke-width="7" stroke-linecap="round" />
+                <ellipse cx="96" cy="300" rx="44" ry="56" transform="rotate(-18 96 300)" fill="url(#cup)" />
+                <ellipse cx="88" cy="300" rx="22" ry="34" transform="rotate(-18 88 300)" fill="#6E1818" opacity=".55" />
+                <g fill="#4A0F0F" opacity=".6"><circle cx="80" cy="292" r="2.2" /><circle cx="88" cy="286" r="2.2" /><circle cx="86" cy="300" r="2.2" /><circle cx="94" cy="296" r="2.2" /><circle cx="92" cy="310" r="2.2" /></g>
+                <ellipse cx="76" cy="514" rx="42" ry="48" transform="rotate(14 76 514)" fill="url(#cup)" />
+                <ellipse cx="70" cy="516" rx="20" ry="28" transform="rotate(14 70 516)" fill="#6E1818" opacity=".55" />
+                <g fill="#4A0F0F" opacity=".6"><circle cx="64" cy="510" r="2" /><circle cx="72" cy="506" r="2" /><circle cx="70" cy="520" r="2" /><circle cx="78" cy="516" r="2" /></g>
+              </g>
+            </svg>
+            <button class="phone__tag" id="phone-tag" type="button">Pick up the phone <svg class="m-arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 11 11 5M6 5h5v5" /></svg></button>
+          </div>
+          <div class="line">
+            <span class="dot" id="line-dot"></span><span id="line-text">The line is open</span>
+            <span class="line__sep"></span><span class="mono" id="clock">1:30</span>
+            <span class="bars" id="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+          </div>
+          <button class="btn" id="pickup"><svg class="m-arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 11 11 5M6 5h5v5" /></svg><span id="pickup-text">Pick up</span></button>
+          <p class="hint" id="hint">Lift the handset, then press Pick up or Space.</p>
+          <button class="link-btn" id="back-persona"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 4 6 8l4 4" /></svg>Change the friend</button>
+        </div>
+
+        <a class="demo-link" id="demo-link" href="/?demo=1">Just looking? Watch a demo <svg class="m-arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" /></svg></a>
+
+        <!-- ?setup=1: choose the USB handset -->
+        <div class="setup" id="setup" hidden>
+          <label for="mic">Microphone</label><select id="mic"></select>
+          <label for="speaker">Speaker</label><select id="speaker"></select>
+          <div class="setup__row"><button class="btn btn--ghost" id="test-ring">Test ring</button><span id="setup-note"></span></div>
+        </div>
+      </section>
+
+      <!-- right: superpowers (or Blitzen's concession gate) + activity -->
+      <section class="col col--right" aria-label="Superpowers">
+        <div class="col__head"><h2 id="right-title">Superpowers</h2><span class="mono" id="right-count">0 / 3</span></div>
+        <p class="tagline" id="right-tagline">Same three tools.<br />Your friend decides when.</p>
+        <ol class="rows rows--check" id="right-rows"></ol>
+        <div class="col__head col__head--sub"><h3 id="activity-title">Tool activity</h3><span class="mono" id="activity-count">00</span></div>
+        <div class="activity" id="actionlog">
+          <p class="muted" id="activity-empty-1">No tool calls yet.</p>
+          <p class="muted small" id="activity-empty-2">When your friend uses a superpower, the ADK tool call shows up here.</p>
+        </div>
+        <div class="col__foot" id="right-foot"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 9h3l2-5 2 8 2-3h3" /></svg><span id="right-foot-text">Tools it decides to use</span></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- end of call -->
+  <div class="sheet" id="card" role="dialog" aria-modal="true" aria-labelledby="card-title">
+    <div class="sheet__box">
       <div class="friend" id="friend-card" hidden>
-        <div class="k">friend card · devfest 2026</div>
-        <div class="name" id="fc-name"></div>
-        <div class="catch" id="fc-catch"></div>
-        <div class="verdict" id="fc-verdict"></div>
-        <div class="by" id="fc-by"></div>
+        <div class="friend__top"><span class="friend__mark">{∗}</span><span>Friend card · DevFest 2026</span></div>
+        <div class="friend__name" id="fc-name"></div>
+        <div class="friend__catch" id="fc-catch"></div>
+        <div class="friend__verdict" id="fc-verdict"></div>
+        <div class="friend__by" id="fc-by"></div>
       </div>
-      <h2 id="card-title">Call ended</h2>
-      <div class="sub" id="card-sub"></div>
+      <p class="eyebrow">Call ended</p>
+      <h2 class="sheet__title" id="card-title">Call ended</h2>
+      <p class="sheet__sub" id="card-sub"></p>
       <div id="pyramid-result" hidden>
         <div class="stats">
-          <div class="stat"><div class="n" id="stat-tiers">0/3</div><div class="k">pyramid landed</div></div>
-          <div class="stat"><div class="n" id="stat-answer">—</div><div class="k">time to your answer</div></div>
+          <div class="stat"><div class="stat__n mono" id="stat-tiers">0/3</div><div class="stat__k">points landed</div></div>
+          <div class="stat"><div class="stat__n mono" id="stat-answer">—</div><div class="stat__k">time to your answer</div></div>
         </div>
-        <div class="row good" id="card-good"></div>
-        <div class="row fix" id="card-fix"></div>
+        <div class="note note--good" id="card-good"></div>
+        <div class="note note--fix" id="card-fix"></div>
       </div>
-      <div class="row" id="card-tools"></div>
-      <div class="actions">
-        <button id="again">Next visitor</button>
-        <button class="ghost" id="close">See the conversation</button>
+      <div class="note" id="card-tools"></div>
+      <div class="sheet__actions">
+        <button class="btn" id="again"><svg class="m-arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" /></svg>Next visitor</button>
+        <button class="btn btn--ghost" id="close">See the conversation</button>
       </div>
     </div>
   </div>

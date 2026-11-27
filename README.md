@@ -113,7 +113,8 @@ devfest-voice-agent/
 │   ├── tools.py         concede(): updates open concerns in session state
 │   ├── server.py        FastAPI: /cards, /voice-sample, /ws (one phone call)
 │   ├── cave_test.py     K4 · prompt-only vs gated, pressure vs fair
-│   └── frontend/        voice → persona → phone → call → Friend Card, ?setup=1, ?demo=1
+│   └── frontend/        index.html (voice → persona → phone → call → Friend Card, ?setup=1, ?demo=1),
+│                        architecture.html (live mirror of the call), style.css
 ├── tests/test_booth.py  offline checks: every voice × persona builds
 └── docs/PRD.md          what we're building, risks, tests, run of show
 └── docs/PRD.md          what we're building, risks, tests, run of show
@@ -129,3 +130,11 @@ devfest-voice-agent/
 - **Singaporean English is never a habit.** Accent and particles (lah, leh, lor) aren't in any rule, and Blitzen is told never to comment on them.
 
 Voice plumbing (16 kHz mic worklet, 24 kHz playback, barge-in) comes from the `live-dj` series (EP1–EP3).
+
+## Design
+
+The booth and architecture pages share `sparring/frontend/style.css`: cream paper, near-black ink, one maroon accent, Geist and Geist Mono, numbered rows with hairlines. The hover, press and entrance timings follow the [taste-skill](https://github.com/Leonxlnx/taste-skill) motion rules. The skill isn't committed (it's about 40 MB); restore it from `skills-lock.json` with:
+
+```bash
+npx skills experimental_install
+```
