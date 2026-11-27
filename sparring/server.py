@@ -1,74 +1,133 @@
-"""Built A Friend? backend: a live 90-second pyramid-principle round with Blitzen.
+"""Build A Friend booth backend: pick a voice, pick a persona, pick up the phone.
 
-Same skeleton as live-dj's EP3 (LiveRequestQueue up, run_live down, the policy door feeding
-the action log). What's new:
-  - the session STARTS with state (K1): Blitzen's open concerns live there;
-  - the user's transcribed words are recorded so the gate (K2) can check that
-    evidence is grounded in what they actually said;
-  - every verdict also carries the remaining open concerns, for the UI.
+One WebSocket = one phone call. The browser opens /ws?voice=<card>&persona=<card>;
+the server builds that friend (agent.build_friend), runs it on Gemini Live through
+ADK's run_live, and streams back audio, transcripts and every tool call.
+
+  - LiveRequestQueue up (16 kHz mic PCM), run_live down (24 kHz voice);
+  - the user's transcribed words are recorded so Blitzen's gate (K2) can check
+    that evidence is grounded in what they actually said;
+  - every tool call and result goes to the browser via a per-call queue;
+  - ~20 s before time, the friend is told to wrap up and make the Friend Card;
+    the call is hard-capped at ROUND_SECONDS + GRACE_SECONDS.
 """
 import asyncio
+import io
 import json
 import logging
 import os
+import wave
 from pathlib import Path
 
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
+from google import genai
 from google.genai import types
-from google.adk.runners import Runner, RunConfig
-from google.adk.agents.run_config import StreamingMode
+from google.adk.runners import Runner
 from google.adk.agents import LiveRequestQueue
 from google.adk.sessions import InMemorySessionService
 
-from sparring.agent import root_agent, VOICE
+from sparring.agent import build_friend
 from sparring.config import APP_NAME
-from sparring.policy import action_events, forget_session, record_user_words
+from sparring.personas import (DEFAULT_PERSONA, DEFAULT_VOICE, PERSONA_CARDS, VOICE_CARDS, WRAP_UP,
+                               opener)
+from sparring.policy import forget_session, listen, record_user_words
 from sparring.stance import STANCE, initial_state
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(APP_NAME)
 
 ROUND_SECONDS = int(os.getenv("ROUND_SECONDS", "90"))
+WRAP_LEAD_SECONDS = int(os.getenv("WRAP_LEAD_SECONDS", "20"))
+GRACE_SECONDS = int(os.getenv("GRACE_SECONDS", "20"))
+TTS_MODEL = os.getenv("TTS_MODEL", "gemini-2.5-flash-preview-tts")
+SAMPLE_CACHE = Path(__file__).resolve().parent / ".cache" / "voice_samples"
 
-# Runner
 session_service = InMemorySessionService()
-runner = Runner(app_name=APP_NAME, agent=root_agent, session_service=session_service)
-
-# RunConfig 
-RUN_CONFIG = RunConfig(
-    streaming_mode=StreamingMode.BIDI, #IMPT: This has no effect on Gemini Live, which is always bidi. It only affects the runner's behavior.
-    response_modalities=["AUDIO"],
-    speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(
-        prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=VOICE))),
-    input_audio_transcription=types.AudioTranscriptionConfig(),
-    output_audio_transcription=types.AudioTranscriptionConfig(),
-)
 
 app = FastAPI(title=APP_NAME)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 FRONTEND = Path(__file__).resolve().parent / "frontend"
 
 
+# ---------- the cards, for the picker screens ----------
+
+@app.get("/cards")
+async def cards():
+    return {
+        "seconds": ROUND_SECONDS,
+        "voices": [{"id": v.id, "label": v.label, "voice": v.voice_name, "vibe": v.vibe}
+                   for v in VOICE_CARDS.values()],
+        "personas": [{"id": p.id, "name": p.name, "tagline": p.tagline, "emoji": p.emoji,
+                      "pyramid": p.pyramid} for p in PERSONA_CARDS.values()],
+    }
+
+
+@app.get("/voice-sample/{voice_id}")
+async def voice_sample(voice_id: str):
+    """A short preview of each voice, made once with Gemini TTS (same prebuilt voices) and cached."""
+    v = VOICE_CARDS.get(voice_id)
+    if not v:
+        raise HTTPException(404, "unknown voice")
+    path = SAMPLE_CACHE / f"{voice_id}.wav"
+    if not path.exists():
+        try:
+            resp = await genai.Client().aio.models.generate_content(
+                model=TTS_MODEL,
+                contents=f"Say it in a {v.vibe} way, with a light Singaporean accent: {v.sample}",
+                config=types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=v.voice_name))),
+                ),
+            )
+            pcm = resp.candidates[0].content.parts[0].inline_data.data
+        except Exception as e:
+            log.warning("voice sample failed for %s: %r", voice_id, e)
+            raise HTTPException(503, "voice sample unavailable")
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000); w.writeframes(pcm)
+        SAMPLE_CACHE.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(buf.getvalue())
+    return Response(path.read_bytes(), media_type="audio/wav")
+
+
+# ---------- one phone call ----------
+
 @app.websocket("/ws")
 async def ws(websocket: WebSocket):
     await websocket.accept()
-    session = await session_service.create_session(
-        app_name=APP_NAME, user_id="speaker", state=initial_state(STANCE))
-    log.info("round start: session=%s voice=%s", session.id, VOICE)
+    voice = websocket.query_params.get("voice", DEFAULT_VOICE)
+    persona_id = websocket.query_params.get("persona", DEFAULT_PERSONA)
+    if voice not in VOICE_CARDS or persona_id not in PERSONA_CARDS:
+        await websocket.send_text(json.dumps({"type": "error", "message": "unknown voice or persona card"}))
+        await websocket.close()
+        return
+    persona = PERSONA_CARDS[persona_id]
+
+    agent, run_config = build_friend(voice, persona_id)
+    runner = Runner(app_name=APP_NAME, agent=agent, session_service=session_service)
+    state = initial_state(STANCE) if persona.pyramid else {"persona": persona_id}
+    session = await session_service.create_session(app_name=APP_NAME, user_id="visitor", state=state)
+    events = listen(session.id)
+    log.info("call start: session=%s voice=%s persona=%s", session.id, voice, persona_id)
     live_request_queue = LiveRequestQueue()
 
     await websocket.send_text(json.dumps({
-        "type": "round", "seconds": ROUND_SECONDS, "persona": STANCE.name,
-        "concerns": [{"id": c.id, "label": c.label, "question": c.question} for c in STANCE.concerns],
+        "type": "round", "seconds": ROUND_SECONDS,
+        "persona": {"id": persona.id, "name": persona.name, "emoji": persona.emoji, "pyramid": persona.pyramid},
+        "voice": {"id": voice, "label": VOICE_CARDS[voice].label},
+        "concerns": ([{"id": c.id, "label": c.label, "question": c.question} for c in STANCE.concerns]
+                     if persona.pyramid else []),
     }))
-    # Blitzen opens with a warm hello so the user isn't facing silence.
-    live_request_queue.send_content(types.Content(role="user", parts=[types.Part.from_text(
-        text="(The session is starting soon, Greet me warmly in one short sentence and ask what's on my mind.)")]))
+    # The friend speaks first so the visitor isn't facing silence.
+    live_request_queue.send_content(types.Content(role="user", parts=[types.Part.from_text(text=opener(persona_id))]))
 
     async def upstream():
         while True:
@@ -108,31 +167,35 @@ async def ws(websocket: WebSocket):
         if getattr(event, "interrupted", None):
             await websocket.send_text(json.dumps({"type": "interrupted"}))
 
-    async def downstream(): #async generator that yields events from the runner to the websocket
-        async for event in runner.run_live( #IMPT: opens WebSocket to Gemini Live, sends events to the websocket
+    async def downstream():
+        async for event in runner.run_live(   # opens the Gemini Live connection
             user_id=session.user_id, session_id=session.id,
-            live_request_queue=live_request_queue, run_config=RUN_CONFIG,
+            live_request_queue=live_request_queue, run_config=run_config,
         ):
             await handle(event)
 
-    async def policy_feed():
-        # Gate verdicts -> the action log. On an allowed concede, the tool updates state
-        # right after the callback, so compute what's still open from the verdict itself.
-        open_now = list(initial_state(STANCE)["open_concerns"])
+    async def tool_feed():
+        # Tool calls + results -> the browser. For Blitzen, also track which tiers are still
+        # open: on an allowed concede the tool updates state right after the callback.
+        open_now = list(state.get("open_concerns", []))
         while True:
-            v = await action_events.get()
+            v = await events.get()
             if v.get("tool") == "concede" and v.get("status") == "ok":
                 open_now = [c for c in open_now if c != v["args"].get("concern_id")]
-            await websocket.send_text(json.dumps({"type": "action", **v, "open": open_now}))
+            await websocket.send_text(json.dumps({"type": "action", **v, "open": open_now}, default=str))
 
-    while not action_events.empty():
-        action_events.get_nowait()
+    async def clock():
+        await asyncio.sleep(max(0, ROUND_SECONDS - WRAP_LEAD_SECONDS))
+        live_request_queue.send_content(types.Content(role="user", parts=[types.Part.from_text(text=WRAP_UP)]))
+        await websocket.send_text(json.dumps({"type": "wrap_up"}))
+        await asyncio.sleep(WRAP_LEAD_SECONDS + GRACE_SECONDS)   # hard cap: hang up
 
     up = asyncio.create_task(upstream(), name="upstream")
     down = asyncio.create_task(downstream(), name="downstream")
-    feed = asyncio.create_task(policy_feed(), name="policy_feed")
+    timer = asyncio.create_task(clock(), name="clock")
+    feed = asyncio.create_task(tool_feed(), name="tool_feed")
     try:
-        done, pending = await asyncio.wait({up, down}, return_when=asyncio.FIRST_COMPLETED)
+        done, pending = await asyncio.wait({up, down, timer}, return_when=asyncio.FIRST_COMPLETED)
         live_request_queue.close()
         for t in done:
             exc = t.exception()
@@ -152,7 +215,11 @@ async def ws(websocket: WebSocket):
         await asyncio.gather(feed, return_exceptions=True)
         live_request_queue.close()
         forget_session(session.id)
-        log.info("round closed: session=%s", session.id)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+        log.info("call closed: session=%s", session.id)
 
 
 if FRONTEND.exists():

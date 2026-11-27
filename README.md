@@ -1,14 +1,28 @@
-# Built A Friend?
+# Build A Friend
 
-Talk to **Blitzen** for 90 seconds about something you're actually working on: an update, a recommendation, an ask. Blitzen is warm, encouraging and on your side, and listens like a busy senior leader between meetings.
+A DevFest 2026 booth built on **Google ADK** + the **Gemini Live API**. A visitor builds a voice friend in three steps, then talks to it on a real phone handset:
 
-Blitzen trains one thing: the **pyramid principle**. Answer first, then the reasons, then the "so what". Start with background and Blitzen gently cuts in: *"Love the context, but what's the answer, in one sentence?"* Flatter Blitzen, say "it's complicated", ask to "just move on": Blitzen smiles and asks again.
+1. **Pick a voice.** Chill Mentor (`Charon`), Hype Friend (`Puck`) or Sharp Exec (`Kore`). This is the Gemini Live speech config.
+2. **Pick a persona.** Elevator CTO, Curious Tech Friend, Voice Agent Know-it-all, or **Blitzen · Free play** (the pyramid-principle sparring partner from the talk). This is the agent instruction.
+3. **Pick up the phone** and talk for about 90 seconds. Every persona has the same **superpowers** (ADK tools) and decides by itself when to use them:
 
-Built on **Google ADK** + the **Gemini Live API** for DevFest 2026.
+| Superpower | ADK tool | At the booth |
+|---|---|---|
+| 🔍 Know-it-all | `google_search`, wrapped as an `AgentTool` | live facts, like "what launched at I/O this year?" |
+| 🧮 Math Whiz | `BuiltInCodeExecutor`, wrapped as an `AgentTool` | runs real code mid-chat, like "what's my runway?" |
+| 🪪 Friend Card | custom function tool `make_friend_card` | the souvenir card shown when the call ends |
 
-The application name is `devfest-agent`, shared by the server and evaluation harness through `sparring/config.py`. The Python package remains `sparring`.
+Each tool call shows up on screen as it happens. About 20 seconds before time, the server tells the friend to wrap up and make the Friend Card.
+
+The wording of the voice and persona cards comes from the **Build A Friend: Booth Config** doc; it lives in [`sparring/personas.py`](sparring/personas.py). The tools are in [`sparring/superpowers.py`](sparring/superpowers.py).
+
+## Blitzen (free play)
+
+Blitzen trains one thing: the **pyramid principle**. Answer first, then the reasons, then the "so what". Start with background and Blitzen gently cuts in: *"Love the context, but what's the answer, in one sentence?"* Flatter Blitzen, say "it's complicated", ask to "just move on": Blitzen smiles and asks again. When Blitzen is picked, the call screen also shows the pyramid and every `concede(...)` verdict.
 
 > **The thesis:** LLMs are trained to agree with you. A sparring partner has to hold the line until you've earned it. Warm in tone, firm on substance, and you can **measure** whether it holds.
+
+The application name is `devfest-agent`, shared by the server and evaluation harness through `sparring/config.py`. The Python package remains `sparring`.
 
 ![the pyramid](docs/screenshot.png)
 
@@ -32,26 +46,31 @@ uv sync
 cp .env.example .env          # paste your GOOGLE_API_KEY (AI Studio key, not Vertex)
 ```
 
-### Talk to Blitzen (live voice)
+### Run the booth (live voice)
 
 ```bash
 uv run uvicorn sparring.server:app --port 8000
 ```
 
-Open <http://localhost:8000>, **headphones on**, press **Start**. Blitzen says hello. You have 90 seconds.
+1. Plug in the USB handset and open <http://localhost:8000/?setup=1>. Choose the handset as **Microphone** and **Speaker** (saved in the browser), and press **Test ring**. In browsers that can't pick a speaker, make the handset the system output instead.
+2. Visitors use <http://localhost:8000>: pick a voice (▶ plays a sample), pick a persona, the phone rings, lift the handset and press **Pick up** (or Space).
+3. The call ends with the Friend Card. **Next visitor** (or 60 seconds of no taps) goes back to step 1.
 
-What you'll see:
-- **The pyramid** fills from the top as each tier lands: Answer → Because → So what. A blocked attempt shakes the tier.
-- **The gate** (right) shows every `concede(...)` with its verdict. Blocked ones are red, with the reason: *"not first (came after 65 words of build-up)"*.
-- **The round card** at the end: how much of the pyramid landed, **time to your answer**, your strongest line, and one thing to try next round.
-
-Try both:
+With Blitzen, try both:
 - Start with *"So, a bit of background first…"* and keep going → blocked, "not first"
 - Start with *"We should cut onboarding from five steps to two by March."* → the answer lands
 
+Settings (all optional, in `.env`): `LIVE_MODEL`, `TOOL_MODEL` (the model behind Know-it-all and Math Whiz, default `gemini-2.5-flash`), `TTS_MODEL` (voice samples), `ROUND_SECONDS`, `WRAP_LEAD_SECONDS`, `GRACE_SECONDS`.
+
 ### Preview the UI without a mic
 
-<http://localhost:8000/?demo=1> replays a scripted round. Useful for checking the UI, and as a fallback if the booth Wi-Fi dies.
+<http://localhost:8000/?demo=1> replays a scripted call (Elevator CTO, a Math Whiz call, a Friend Card). Useful for checking the UI, and as a fallback if the booth Wi-Fi dies.
+
+### Offline checks
+
+```bash
+uv run --with pytest pytest -q
+```
 
 ### Measure it (no mic)
 
@@ -70,7 +89,7 @@ A good result: **gated/pressure caves no more than prompt/pressure**, and **gate
 uv run adk web . --port 8000
 ```
 
-Pick **`sparring`**, switch the mic on, and watch the `concede` calls and their responses as event cards. A blocked call returns `{"result": "blocked", "reason": ...}`.
+Pick **`sparring`**, switch the mic on, and watch the tool calls and their responses as event cards. Choose which friend loads with `BOOTH_VOICE` and `BOOTH_PERSONA` (e.g. `BOOTH_PERSONA=blitzen`); with Blitzen, a blocked `concede` returns `{"result": "blocked", "reason": ...}`.
 
 ## Make your own sparring partner
 
@@ -86,19 +105,24 @@ The pattern works for any framework your team already uses: a review checklist, 
 ```
 devfest-voice-agent/
 ├── sparring/
+│   ├── personas.py      booth stations 1 + 2: voice cards, BASE + persona instructions
+│   ├── superpowers.py   booth station 3: know_it_all, math_whiz, make_friend_card
+│   ├── agent.py         build_friend(voice, persona) + Blitzen's cave-test baseline
 │   ├── stance.py        K1 · Blitzen: role, warmth, stake, the pyramid as concerns
-│   ├── policy.py        K2 · the concession gate (grounded + answer-first rules)
+│   ├── policy.py        K2 · the concession gate + the tool-call log for the UI
 │   ├── tools.py         concede(): updates open concerns in session state
-│   ├── agent.py         root_agent (gated) + make_agent(gated=False) baseline
-│   ├── server.py        FastAPI /ws: 90-second live round, transcripts, gate feed
+│   ├── server.py        FastAPI: /cards, /voice-sample, /ws (one phone call)
 │   ├── cave_test.py     K4 · prompt-only vs gated, pressure vs fair
-│   └── frontend/        pyramid, gate log, round clock, end-of-round card, ?demo=1
+│   └── frontend/        voice → persona → phone → call → Friend Card, ?setup=1, ?demo=1
+├── tests/test_booth.py  offline checks: every voice × persona builds
+└── docs/PRD.md          what we're building, risks, tests, run of show
 └── docs/PRD.md          what we're building, risks, tests, run of show
 ```
 
 ## Honest notes
 
-- **The live voice round hasn't been tried with a real mic yet.** The cave test (text turns) and the UI (demo replay) have.
+- **The booth hasn't been tried with a real API key and handset yet.** The flow, the call screen and the Friend Card have been checked with the demo replay, and every voice × persona builds offline.
+- **Know-it-all and Math Whiz take a few seconds**: each is a call to a second, non-live model. The friend is told to say what it's doing to cover the pause.
 - **The rules are deliberately simple, so they can be gamed.** "We should…" followed by nonsense is still "a position". The rule catches *structure*, not *quality*; quality is the coach's job (K3).
 - **Answer-first is measured in words, not seconds**, because transcripts arrive as text. 45 words is roughly 15 seconds of speech.
 - **A live session's system instruction is fixed at connect time**, so the remaining open points reach the model through every `concede` result rather than by rewriting the prompt.

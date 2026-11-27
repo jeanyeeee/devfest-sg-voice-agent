@@ -26,8 +26,20 @@ from typing import Any, Optional
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 
-# Verdicts -> the browser log (and the cave test).
+# Tool calls, verdicts and results -> the browser log (and the cave test).
+# A live call registers its own queue with listen(session_id); anything from a
+# session without a listener (the cave test) goes to the shared action_events.
 action_events: asyncio.Queue = asyncio.Queue()
+_listeners: dict[str, asyncio.Queue] = {}
+
+
+def listen(session_id: str) -> asyncio.Queue:
+    q = _listeners[session_id] = asyncio.Queue()
+    return q
+
+
+def emit(session_id: str, event: dict) -> None:
+    (_listeners.get(session_id) or action_events).put_nowait({**event, "session": session_id})
 
 # Everything the user has said so far, per session, in order. The server (mic
 # transcription) and the cave test (text turns) append to it; the gate reads it.
@@ -41,6 +53,7 @@ def record_user_words(session_id: str, text: str) -> None:
 
 def forget_session(session_id: str) -> None:
     _heard.pop(session_id, None)
+    _listeners.pop(session_id, None)
 
 
 ANSWER_WINDOW_WORDS = 45     # "answer first" = it starts within your first 45 words (~15 s)
@@ -127,7 +140,7 @@ async def concession_gate(
 ) -> Optional[dict]:
     sid = tool_context.session.id
     if tool.name != "concede":
-        action_events.put_nowait({"tool": tool.name, "args": dict(args), "status": "ok", "session": sid})
+        emit(sid, {"tool": tool.name, "phase": "call", "args": dict(args), "status": "ok"})
         return None
 
     open_concerns = list(tool_context.state.get("open_concerns", []))
@@ -141,8 +154,8 @@ async def concession_gate(
     else:
         ok, reason = judge_evidence(concern, quote, _heard.get(sid, []))
 
-    action_events.put_nowait({"tool": "concede", "args": dict(args), "status": "ok" if ok else "blocked",
-                              "reason": reason, "session": sid})
+    emit(sid, {"tool": "concede", "phase": "call", "args": dict(args),
+               "status": "ok" if ok else "blocked", "reason": reason})
     if ok:
         return None  # the concede tool runs and updates state
 
@@ -156,3 +169,14 @@ async def concession_gate(
                     "Stay warm and on their side, but don't let it go. In one sentence, "
                     "ask for exactly what's missing."),
     }
+
+
+async def tool_result_log(
+    tool: BaseTool, args: dict[str, Any], tool_context: ToolContext, tool_response: Any
+) -> Optional[dict]:
+    """after_tool_callback: show what each superpower returned (the Friend Card arrives this way)."""
+    if tool.name != "concede":
+        result = tool_response if isinstance(tool_response, (dict, list, str, int, float)) else str(tool_response)
+        emit(tool_context.session.id, {"tool": tool.name, "phase": "result", "args": dict(args),
+                                       "status": "ok", "result": result})
+    return None  # never change the result
