@@ -59,6 +59,8 @@ async function loadCards() {
   [["nav-arch", links.architecture], ["nav-slides", links.slides]].forEach(([id, url]) => {
     if (url) { $(id).href = url; $(id).hidden = false; }
   });
+  // A lone "Voice" tab says nothing: only show the nav when there's a link to go with it.
+  $("nav").hidden = !(links.architecture || links.slides);
 
   $("voice-cards").innerHTML = "";
   CARDS.voices.forEach((v, i) => {
@@ -208,7 +210,7 @@ function openCall() {
   $("hangup").hidden = true; $("callout").hidden = false; $("back-persona").hidden = false;
   $("demo-link").hidden = params.get("demo") === "1";
   $("call-hint").textContent = `${pick.voice.label} voice. Headphones on. Interrupt any time.`;
-  $("empty-big").innerHTML = p.pyramid ? "A little less background.<br>A little more to the point." : esc(p.tagline);
+  $("empty-big").innerHTML = p.pyramid ? "A little less background.<br>A little more to the point." : "Pick up and say hi.<br>Your friend takes it from there.";
   renderRight();
   setStatus();
   show("s-call");
@@ -232,7 +234,7 @@ function enterCall() {
 function renderRight() {
   const coach = pick.persona?.pyramid;
   $("right-title").textContent = coach ? "The concession gate" : "Superpowers";
-  $("right-sub").innerHTML = coach ? "Warm in tone.<br>Firm on what counts." : "Your friend decides<br>when to use them.";
+  $("right-sub").innerHTML = coach ? "Warm in tone.<br>Firm on what counts." : "Each one lights up<br>when your friend uses it.";
   $("activity-title").textContent = coach ? "Gate activity" : "Tool activity";
   $("right-foot").textContent = coach ? "Evidence before agreement" : "Real ADK tool calls";
   const items = coach

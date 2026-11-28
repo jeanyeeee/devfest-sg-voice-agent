@@ -21,11 +21,17 @@ A DevFest 2026 booth built on **Google ADK** + the **Gemini Live API**. A visito
 | Voice Agent Know-it-all | Know-it-all, Agent Blueprint, Friend Card |
 | Problem Solving Coach | Know-it-all, Math Whiz, Pitch Polisher, Friend Card (+ `concede`) |
 
+![Step 2: pick a persona](docs/screenshots/persona.png)
+
+![On the call: live transcript, the phone, and each superpower lighting up as the friend uses it](docs/screenshots/call.png)
+
 The Flash-Lite sub-agents are **non-blocking** on Gemini Live (`behavior=NON_BLOCKING`, `response_scheduling=WHEN_IDLE`): the friend keeps talking while they run and works the result in when it's free. Math Whiz and the Friend Card stay blocking.
 
 Before a search or a sum, the friend says what it's about to do ("Wait ah, let me Google what launched at I/O"), so the visitor can cut in. If it calls a tool without a word, the booth plays a short cached line in the friend's voice instead (`BRIDGE_LINES` in `personas.py`, made with Gemini TTS at startup). Each tool call shows up on screen as it happens, with how long it took. About 25 seconds before time, the server tells the friend to wrap up and make the Friend Card.
 
 **Every call ends with a Friend Card.** If the friend never called `make_friend_card`, the browser posts the transcript to `POST /friend-card` and Gemini Flash-Lite writes the card with structured output (`FriendCard` in `superpowers.py`); if that fails, a template card is used. The end screen shows the card, the persona's superpowers (used ones lit up), and the tool activity: every function call in order, with what was asked, the result and how long it took.
+
+![The end screen: the Friend Card, the superpowers, and every tool call with its timing](docs/screenshots/friend-card.png)
 
 The wording of the voice and persona cards comes from the **Build A Friend: Booth Config** doc; it lives in [`sparring/personas.py`](sparring/personas.py). The tools are in [`sparring/superpowers.py`](sparring/superpowers.py).
 
@@ -37,7 +43,7 @@ The coach trains one thing: the **pyramid principle**. Answer first, then the re
 
 The application name is `devfest-agent`, shared by the server and evaluation harness through `sparring/config.py`. The Python package remains `sparring`.
 
-![the pyramid](docs/screenshot.png)
+![The Problem Solving Coach: the right-hand column becomes the concession gate (answer, because, so what)](docs/screenshots/coach.png)
 
 ## What you can reuse
 
@@ -129,8 +135,9 @@ devfest-voice-agent/
 │   ├── cave_test.py     K4 · prompt-only vs gated, pressure vs fair
 │   └── frontend/        voice → persona → phone → call → Friend Card, ?setup=1, ?demo=1
 ├── tests/test_booth.py  offline checks: every voice × persona builds
-└── docs/PRD.md          what we're building, risks, tests, run of show
-└── docs/PRD.md          what we're building, risks, tests, run of show
+└── docs/
+    ├── PRD.md           what we're building, risks, tests, run of show
+    └── screenshots/     the images in this README (from ?demo=1)
 ```
 
 ## Honest notes

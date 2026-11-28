@@ -138,7 +138,7 @@ PERSONA_CARDS = {
                             "Two minutes in a lift. Pitch yourself for your next role.", "🛗",
                             ("know_it_all", "math_whiz", "pitch_polisher", "make_friend_card")),
     "curious_tech_friend": Persona("curious_tech_friend", "Curious Tech Friend",
-                                   "Just met at a Google's DevFest 2026. Talk about yourself and what are you building?", "🧋",
+                                   "Just met at DevFest 2026. Tell it about yourself and what you're building.", "🧋",
                                    ("know_it_all", "pitch_polisher", "make_friend_card")),
     "voice_agent_know_it_all": Persona("voice_agent_know_it_all", "Voice Agent Know-it-all",
                                        "Tell it a problem. Should it be a voice agent?", "🎙️",
