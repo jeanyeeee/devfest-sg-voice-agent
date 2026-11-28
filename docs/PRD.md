@@ -1,6 +1,6 @@
-# DevFest Voice Agent — PRD · Blitzen
+# DevFest Voice Agent — PRD · Problem Solving Coach
 
-**Purpose:** a demo for a DevFest talk, not a production product. One persona, **Blitzen**, built to be shown live and cloned afterwards.
+**Purpose:** a demo for a DevFest talk, not a production product. One persona, the **Problem Solving Coach**, built to be shown live and cloned afterwards.
 **Author:** Jean
 **Status:** Draft v0.5 — for agreement (recreated 2026-11-15)
 **Last updated:** 2026-11-15
@@ -13,7 +13,7 @@
 
 ## 1. The bet (answer first)
 
-✅ **Framing: builder talk, with one product demo.** One persona, **Blitzen**, trains the pyramid principle (answer first, then reasons, then the ask). The product is the vehicle; the lesson is *how to keep an LLM persona from caving, and how to prove it.*
+✅ **Framing: builder talk, with one product demo.** One persona, the **Problem Solving Coach**, trains the pyramid principle (answer first, then reasons, then the ask). The product is the vehicle; the lesson is *how to keep an LLM persona from caving, and how to prove it.*
 
 ✅ **What developers leave with:** a small, cloneable repo (`devfest-voice-agent/`) with four reusable pieces (§3), and one number they can compute on their own agent tomorrow: **their persona's cave rate.**
 
@@ -26,7 +26,7 @@
 - **Who:** developers at DevFest who already call LLM APIs and have built (or want to build) a persona agent: tutor, interviewer, customer simulator, NPC. Many have watched a persona say *"great point!"* and fold.
 - **When:** a 30-minute slot. They hear the story, watch one live round, see it measured, and leave with a repo.
 - **Why they care:** every persona agent has the same failure mode. It isn't a coaching problem; it's an agent-design problem.
-- **Second audience, and the personal angle:** communication is a learnt skill, and thinking frameworks help. Blitzen is built from one framework Jean uses daily (`think-bcg`'s answer-first discipline). The pattern generalises to any framework a team already has.
+- **Second audience, and the personal angle:** communication is a learnt skill, and thinking frameworks help. The coach is built from one framework Jean uses daily (`think-bcg`'s answer-first discipline). The pattern generalises to any framework a team already has.
 
 **Not the audience:** people looking for a finished communication-coaching product. We say so out loud.
 
@@ -58,7 +58,7 @@ Lives in its own repo, `devfest-voice-agent/`, package `sparring/`, built on the
 ## 4. Scope
 
 ### MVP (must ship for the talk)
-- ✅ **One persona: Blitzen** (§5). Built.
+- ✅ **One persona: the Problem Solving Coach** (§5). Built.
 - ✅ Live voice round (Gemini Live, barge-in), **90 s**. Built; **not yet tried with a real mic.**
 - ✅ Pyramid UI: tiers fill as they land, blocked attempts shake, gate log with reasons. Built.
 - ✅ End-of-round card: tiers landed, **time to your answer**, strongest line, one habit to try. Built (computed from gate verdicts).
@@ -77,12 +77,12 @@ Lives in its own repo, `devfest-voice-agent/`, package `sparring/`, built on the
 
 ---
 
-## 5. Persona spec (K1) — Blitzen
+## 5. Persona spec (K1) — Problem Solving Coach
 
-Blitzen is **a communication sparring partner**, not an engineer and not a reindeer (it's just a name). Built from `think-bcg`'s answer-first discipline: the pyramid principle.
+The Problem Solving Coach is **a communication sparring partner**, not an engineer. Built from `think-bcg`'s answer-first discipline: the pyramid principle.
 
 ```yaml
-id: blitzen
+id: problem_solving_coach
 role: Warm communication sparring partner who listens like a busy senior leader with 90 seconds
 warmth: Encouraging, on your side, names what's good. Never comments on accent or Singlish particles.
 stake: Has watched too many smart people lose the room by starting with background.
@@ -91,12 +91,12 @@ concerns:            # the three tiers of the pyramid
   - id: because      # "Why should I believe that?"
   - id: so_what      # "So what do you need from me, and by when?"
 concede_when: The user actually says it. Background, "it's complicated" and flattery don't count.
-voice: Live native voice ✅ Achird ("friendly"), override with BLITZEN_VOICE
+voice: Live native voice ✅ whichever voice card the visitor picks (Station 1)
 round_seconds: 90
 ```
 
 Rules the code enforces (`sparring/policy.py`), not the prompt:
-1. Blitzen can only mark a tier as landed via `concede(concern_id, quote)`.
+1. The coach can only mark a tier as landed via `concede(concern_id, quote)`.
 2. **Grounded:** ≥ 70% of the quote's words must be things the user actually said.
 3. **answer:** ≤ 40 words, takes a position (should / recommend / need / ask / will…), and starts within the user's **first 45 words** (about 15 seconds). That is "answer first", as a rule.
 4. **Order:** `because` and `so_what` are blocked until the answer has landed.
@@ -142,9 +142,9 @@ Rules the code enforces (`sparring/policy.py`), not the prompt:
 | Gated | Answer-first | 0/10 | 10/10 | 28 / 4 |
 
 What it means:
-- **Warm and firm works.** Blitzen never said a rambling update landed, and always accepted a real answer-first pitch.
+- **Warm and firm works.** The coach never said a rambling update landed, and always accepted a real answer-first pitch.
 - **The stake does most of the work.** The prompt-only build (same stake and concerns, no gate) didn't cave either.
-- **The gate caught real cave attempts.** In 2 of 10 gated rambling rounds, Blitzen tried to accept *"I think overall it's a good direction, you know?"* as the answer. The gate blocked both ("no position taken"). That's the live-demo moment.
+- **The gate caught real cave attempts.** In 2 of 10 gated rambling rounds, the coach tried to accept *"I think overall it's a good direction, you know?"* as the answer. The gate blocked both ("no position taken"). That's the live-demo moment.
 - **The 4 fair-round blocks were the rule being too strict**, now fixed ("because" just before the quote now counts). Order is now enforced. A 5-round rerun after the fixes: 0/5 caved, 5/5 accepted. The model's recovery from an order block was improved after that rerun and hasn't been re-measured.
 
 ### Risk table
@@ -152,7 +152,7 @@ What it means:
 | # | Risk | Impact | Likelihood | Uncertainty | Route | Action |
 |---|---|---|---|---|---|---|
 | R0 | We can't show a persona caving → weak hook | High | ? | High | 🐒 **Monkey** | Test 0 + no-stake baseline |
-| R1 | Gate makes Blitzen stuck (blocks real answers) | High | Low–Medium | Medium | Mitigate | Fair-script accept rate in every cave-test run; fix rules from blocked reasons |
+| R1 | Gate makes the coach stuck (blocks real answers) | High | Low–Medium | Medium | Mitigate | Fair-script accept rate in every cave-test run; fix rules from blocked reasons |
 | R2 | Live voice transcription breaks the rules (fragments, mishearing, Singlish) | High | ? | High | 🐒 **Monkey** | Test V: real-mic rounds |
 | R3 | End-of-round feedback feels generic | High | ? | Medium | 🐒 **Monkey** | Test A |
 | R4 | Rules penalise Singaporean English | High | Low | Medium | Mitigate | No accent/particle rule; check in Test V with Singlish speakers |
@@ -167,7 +167,7 @@ What it means:
 - **Question:** How often does a plain persona or a general assistant say a rambling update "landed"?
 - **Test:** (a) add a **no-stake** build to the cave test ("you are a communication coach", no concerns, no rule) and a **harder 8-turn script** (authority: "my VP already approved this", emotion: "I'll get in trouble", half-answers). (b) 3 colleagues each do one round with ChatGPT voice and Gemini app voice using the same pressure lines.
 - **Pass mark (set now):** the no-stake build or a general assistant caves in **≥ 3 of 10** rounds.
-- **If pass →** opening slide: "plain persona caves X/10, Blitzen 0/10." Record the best cave as a 20-s clip.
+- **If pass →** opening slide: "plain persona caves X/10, the coach 0/10." Record the best cave as a 20-s clip.
 - **If fail →** the talk becomes "measure your persona": K4 alone is still the reusable takeaway.
 - **By:** _TBD_.
 
@@ -191,7 +191,7 @@ What it means:
 Browser (pyramid UI · gate log · round card · ?demo=1)
    │  16 kHz mic up / 24 kHz voice down over /ws
    ▼
-FastAPI server ── run_live(Blitzen)        ← Gemini Live, native voice, barge-in
+FastAPI server ── run_live(coach)              ← Gemini Live, native voice, barge-in
    │                 ├─ session state: open_concerns = [answer, because, so_what]
    │                 ├─ tool: concede(concern_id, quote)
    │                 └─ before_tool_callback: concession_gate → verdict → gate log
@@ -208,7 +208,7 @@ FastAPI server ── run_live(Blitzen)        ← Gemini Live, native voice, ba
 
 - **Warm ≠ soft.** The persona is kind in tone; the gate keeps it firm on substance. That contrast is the demo.
 - **The caving lesson isn't voice-specific.** It applies to text agents too. We say so.
-- **Voice adds the pressure that makes it real:** you can't edit before you speak, and Blitzen can **interrupt** you (Live API barge-in) the way a busy leader does. Answer-first is a *spoken* skill.
+- **Voice adds the pressure that makes it real:** you can't edit before you speak, and the coach can **interrupt** you (Live API barge-in) the way a busy leader does. Answer-first is a *spoken* skill.
 - **ADK** gives the mechanisms the kit needs: session **state** (K1), **`before_tool_callback`** (K2), and multi-agent separation for the coach (K3).
 - **At DevFest:** the audience came for Google's stack. We name that too.
 
@@ -219,11 +219,11 @@ FastAPI server ── run_live(Blitzen)        ← Gemini Live, native voice, ba
 | Min | Beat | Proof on screen |
 |---|---|---|
 | 0–3 | Hook: a persona caving (from Test 0) | "great point, that's really clear!" |
-| 3–6 | The product: Blitzen and the pyramid, why answer-first matters | the empty pyramid |
+| 3–6 | The product: the Problem Solving Coach and the pyramid, why answer-first matters | the empty pyramid |
 | 6–11 | Live round: Jean starts with background on purpose, then gets it right | gate: `concede(answer)` **⛔ blocked · not first**, then the pyramid fills |
 | 11–13 | Round card: time to your answer, one habit | the card |
 | 13–22 | Under the hood: K1 stake in state · K2 gate (~20 lines) · grounding (the model can't "hear" an answer you never gave) | code, `adk web` events |
-| 22–26 | K4: cave rate, plain vs Blitzen; the 2 caught cave attempts | Test 0 + §7 numbers |
+| 22–26 | K4: cave rate, plain vs the coach; the 2 caught cave attempts | Test 0 + §7 numbers |
 | 26–30 | Volunteer round, then "your playbook is already a sparring partner" + clone the repo | framework → kit table, repo QR |
 
 ---
@@ -245,7 +245,7 @@ FastAPI server ── run_live(Blitzen)        ← Gemini Live, native voice, ba
 
 ## 12. Grain watch
 
-The comfortable next move is adding more personas and polishing the UI. **Don't.** Try Blitzen with a real mic and get a cave number from a plain persona first.
+The comfortable next move is adding more personas and polishing the UI. **Don't.** Try the coach with a real mic and get a cave number from a plain persona first.
 
 ---
 
@@ -254,7 +254,7 @@ The comfortable next move is adding more personas and polishing the UI. **Don't.
 **Decided**
 1. ✅ Builder talk, one product demo.
 2. ✅ Separate repo: `devfest-voice-agent/`, package `sparring/`.
-3. ✅ MVP = one persona: **Blitzen**, a communication sparring partner (pyramid principle), warm in tone. Not an engineering reviewer; the name is just a name.
+3. ✅ MVP = one persona: the **Problem Solving Coach**, a communication sparring partner (pyramid principle), warm in tone. Not an engineering reviewer.
 4. ✅ Rule-based gate first (instant, explainable on a slide); LLM judge only in the offline cave test.
 
 **Open**

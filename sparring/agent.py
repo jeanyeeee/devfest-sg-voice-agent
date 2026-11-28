@@ -3,10 +3,10 @@
   - voice       -> Gemini Live speech config (personas.VOICE_CARDS)
   - persona     -> agent instruction (personas.PERSONALITIES)
   - superpowers -> ADK tools, every persona gets all of them (superpowers.py)
-  - Blitzen     -> also gets concede + the concession gate (stance.py, policy.py)
+  - the coach   -> also gets concede + the concession gate (stance.py, policy.py)
 
 `build_friend(voice, persona)` is what the server calls once per phone call.
-`make_agent(gated=False)` is Blitzen's prompt-only baseline for the cave test.
+`make_agent(gated=False)` is the coach's prompt-only baseline for the cave test.
 `root_agent` is what `adk web` loads (pick it with BOOTH_VOICE / BOOTH_PERSONA).
 """
 import os
@@ -69,7 +69,7 @@ def build_friend(voice: str, personality: str) -> tuple[Agent, RunConfig]:
 
 
 def make_agent(gated: bool = True) -> Agent:
-    """Blitzen alone, for the cave test: concede + gate (gated) vs the prompt-only baseline."""
+    """The coach alone, for the cave test: concede + gate (gated) vs the prompt-only baseline."""
     return Agent(
         model=_model(VOICE_CARDS[DEFAULT_VOICE].voice_name),
         name=STANCE.id if gated else f"{STANCE.id}_prompt_only",

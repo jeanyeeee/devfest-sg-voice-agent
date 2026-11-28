@@ -1,9 +1,9 @@
 """K2 · the concession gate — a before_tool_callback that decides if a point really landed.
 
-Blitzen cannot mark a tier of the pyramid as landed by saying so. He has to call
+The coach cannot mark a tier of the pyramid as landed by saying so. It has to call
 concede(concern_id, quote), and this gate checks the quote. Return None = the
 point lands. Return a dict = blocked; ADK skips the tool and hands the dict to the
-model, and Blitzen asks again.
+model, and the coach asks again.
 
 Every check is rule-based on purpose: cheap, instant (it runs mid-conversation),
 and short enough to read on one slide.
@@ -20,6 +20,7 @@ and short enough to read on one slide.
 """
 import asyncio
 import re
+import time
 from collections import defaultdict
 from typing import Any, Optional
 
@@ -51,9 +52,15 @@ def record_user_words(session_id: str, text: str) -> None:
         _heard[session_id].append(text)
 
 
+# When each superpower call started, per (session, tool), so its result can carry a duration.
+_started: dict[tuple[str, str], list[float]] = defaultdict(list)
+
+
 def forget_session(session_id: str) -> None:
     _heard.pop(session_id, None)
     _listeners.pop(session_id, None)
+    for key in [k for k in _started if k[0] == session_id]:
+        _started.pop(key, None)
 
 
 ANSWER_WINDOW_WORDS = 45     # "answer first" = it starts within your first 45 words (~15 s)
@@ -140,6 +147,7 @@ async def concession_gate(
 ) -> Optional[dict]:
     sid = tool_context.session.id
     if tool.name != "concede":
+        _started[(sid, tool.name)].append(time.monotonic())
         emit(sid, {"tool": tool.name, "phase": "call", "args": dict(args), "status": "ok"})
         return None
 
@@ -176,7 +184,10 @@ async def tool_result_log(
 ) -> Optional[dict]:
     """after_tool_callback: show what each superpower returned (the Friend Card arrives this way)."""
     if tool.name != "concede":
+        sid = tool_context.session.id
         result = tool_response if isinstance(tool_response, (dict, list, str, int, float)) else str(tool_response)
-        emit(tool_context.session.id, {"tool": tool.name, "phase": "result", "args": dict(args),
-                                       "status": "ok", "result": result})
+        starts = _started.get((sid, tool.name))
+        ms = round((time.monotonic() - starts.pop(0)) * 1000) if starts else None
+        emit(sid, {"tool": tool.name, "phase": "result", "args": dict(args),
+                   "status": "ok", "result": result, "ms": ms})
     return None  # never change the result

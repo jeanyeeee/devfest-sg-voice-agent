@@ -5,18 +5,20 @@ the server builds that friend (agent.build_friend), runs it on Gemini Live throu
 ADK's run_live, and streams back audio, transcripts and every tool call.
 
   - LiveRequestQueue up (16 kHz mic PCM), run_live down (24 kHz voice);
-  - the user's transcribed words are recorded so Blitzen's gate (K2) can check
+  - the user's transcribed words are recorded so the coach's gate (K2) can check
     that evidence is grounded in what they actually said;
   - every tool call and result goes to the browser via a per-call queue;
   - ~20 s before time, the friend is told to wrap up and make the Friend Card;
     the call is hard-capped at ROUND_SECONDS + GRACE_SECONDS.
 """
 import asyncio
+import hashlib
 import io
 import json
 import logging
 import os
 import wave
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -34,8 +36,8 @@ from google.adk.sessions import InMemorySessionService
 
 from sparring.agent import build_friend
 from sparring.config import APP_NAME
-from sparring.personas import (DEFAULT_PERSONA, DEFAULT_VOICE, PERSONA_CARDS, VOICE_CARDS, WRAP_UP,
-                               opener)
+from sparring.personas import (BRIDGE_LINES, DEFAULT_PERSONA, DEFAULT_VOICE, PERSONA_CARDS, VOICE_CARDS,
+                               WRAP_UP, opener)
 from sparring.policy import forget_session, listen, record_user_words
 from sparring.stance import STANCE, initial_state
 
@@ -47,10 +49,37 @@ WRAP_LEAD_SECONDS = int(os.getenv("WRAP_LEAD_SECONDS", "20"))
 GRACE_SECONDS = int(os.getenv("GRACE_SECONDS", "20"))
 TTS_MODEL = os.getenv("TTS_MODEL", "gemini-2.5-flash-preview-tts")
 SAMPLE_CACHE = Path(__file__).resolve().parent / ".cache" / "voice_samples"
+BRIDGE_CACHE = Path(__file__).resolve().parent / ".cache" / "bridges"
+BRIDGE_WARM = os.getenv("BRIDGE_WARM", "1") == "1"   # make every backup line at startup
 
 session_service = InMemorySessionService()
 
-app = FastAPI(title=APP_NAME)
+async def _warm_bridges():
+    """Make every backup heads-up line once, in the background, so the first visitor never waits."""
+    failures = 0
+    for voice_id in VOICE_CARDS:
+        for tool, lines in BRIDGE_LINES.items():
+            for n in range(len(lines)):
+                try:
+                    await _bridge_wav(voice_id, tool, n)
+                except Exception as e:
+                    failures += 1
+                    log.warning("bridge line %s/%s/%d failed: %r", voice_id, tool, n, e)
+                    if failures >= 3:
+                        log.warning("giving up on warming bridge lines; they'll be made on first use")
+                        return
+    log.info("bridge lines ready")
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    task = asyncio.create_task(_warm_bridges()) if BRIDGE_WARM else None
+    yield
+    if task:
+        task.cancel()
+
+
+app = FastAPI(title=APP_NAME, lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 FRONTEND = Path(__file__).resolve().parent / "frontend"
 
@@ -65,7 +94,43 @@ async def cards():
                    for v in VOICE_CARDS.values()],
         "personas": [{"id": p.id, "name": p.name, "tagline": p.tagline, "emoji": p.emoji,
                       "pyramid": p.pyramid} for p in PERSONA_CARDS.values()],
+        # header links; each is hidden in the UI while empty
+        "links": {"architecture": os.getenv("ARCH_URL", ""), "slides": os.getenv("SLIDES_URL", "")},
+        "bridges": {tool: list(lines) for tool, lines in BRIDGE_LINES.items()},
     }
+
+
+async def _tts_wav(voice_id: str, text: str, path: Path) -> bytes:
+    """Say `text` in a voice card's prebuilt voice with Gemini TTS, as a 24 kHz WAV, cached at `path`."""
+    if path.exists():
+        return path.read_bytes()
+    v = VOICE_CARDS[voice_id]
+    resp = await genai.Client().aio.models.generate_content(
+        model=TTS_MODEL,
+        contents=f"Say it in a {v.vibe} way, with a light Singaporean accent: {text}",
+        config=types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=v.voice_name))),
+        ),
+    )
+    pcm = resp.candidates[0].content.parts[0].inline_data.data
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000); w.writeframes(pcm)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(buf.getvalue())
+    return buf.getvalue()
+
+
+def _bridge_path(voice_id: str, tool: str, n: int) -> Path:
+    text = BRIDGE_LINES[tool][n]
+    digest = hashlib.sha1(f"{VOICE_CARDS[voice_id].voice_name}|{text}".encode()).hexdigest()[:8]
+    return BRIDGE_CACHE / f"{voice_id}-{tool}-{n}-{digest}.wav"   # new wording = new file
+
+
+async def _bridge_wav(voice_id: str, tool: str, n: int) -> bytes:
+    return await _tts_wav(voice_id, BRIDGE_LINES[tool][n], _bridge_path(voice_id, tool, n))
 
 
 @app.get("/voice-sample/{voice_id}")
@@ -74,28 +139,59 @@ async def voice_sample(voice_id: str):
     v = VOICE_CARDS.get(voice_id)
     if not v:
         raise HTTPException(404, "unknown voice")
-    path = SAMPLE_CACHE / f"{voice_id}.wav"
-    if not path.exists():
-        try:
-            resp = await genai.Client().aio.models.generate_content(
-                model=TTS_MODEL,
-                contents=f"Say it in a {v.vibe} way, with a light Singaporean accent: {v.sample}",
-                config=types.GenerateContentConfig(
-                    response_modalities=["AUDIO"],
-                    speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=v.voice_name))),
-                ),
-            )
-            pcm = resp.candidates[0].content.parts[0].inline_data.data
-        except Exception as e:
-            log.warning("voice sample failed for %s: %r", voice_id, e)
-            raise HTTPException(503, "voice sample unavailable")
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as w:
-            w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000); w.writeframes(pcm)
-        SAMPLE_CACHE.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(buf.getvalue())
-    return Response(path.read_bytes(), media_type="audio/wav")
+    try:
+        wav = await _tts_wav(voice_id, v.sample, SAMPLE_CACHE / f"{voice_id}.wav")
+    except Exception as e:
+        log.warning("voice sample failed for %s: %r", voice_id, e)
+        raise HTTPException(503, "voice sample unavailable")
+    return Response(wav, media_type="audio/wav")
+
+
+@app.get("/bridge/{voice_id}/{tool}/{n}")
+async def bridge(voice_id: str, tool: str, n: int):
+    """A backup heads-up line ("Wait ah, let me Google that.") in the friend's voice."""
+    if voice_id not in VOICE_CARDS or tool not in BRIDGE_LINES or not 0 <= n < len(BRIDGE_LINES[tool]):
+        raise HTTPException(404, "unknown bridge line")
+    try:
+        wav = await _bridge_wav(voice_id, tool, n)
+    except Exception as e:
+        log.warning("bridge line failed for %s/%s/%d: %r", voice_id, tool, n, e)
+        raise HTTPException(503, "bridge line unavailable")
+    return Response(wav, media_type="audio/wav", headers={"Cache-Control": "public, max-age=86400"})
+
+
+# ---------- live transcripts ----------
+
+class TranscriptTracker:
+    """Turns Gemini Live transcription events into browser messages, per role.
+
+    With input/output transcription on in RunConfig, each turn streams as fragments
+    (finished=False) while someone is talking, then closes with one finished=True
+    event carrying the full text of the turn. The browser shows fragments live and
+    swaps in the finished text when the turn ends.
+
+    update() returns (message for the browser, text to record for the gate). The gate
+    records fragments as they arrive; the finished text is recorded only when no
+    fragments came, so nothing is counted twice.
+    """
+
+    def __init__(self):
+        self.saw_fragment = {"user": False, "persona": False}
+
+    def update(self, role: str, tr) -> tuple[dict | None, str | None]:
+        if not tr:
+            return None, None
+        text = getattr(tr, "text", None) or ""
+        finished = bool(getattr(tr, "finished", False))
+        if not text and not (finished and self.saw_fragment[role]):
+            return None, None    # nothing to show (an empty close with no live line is a no-op)
+        msg = {"type": "transcript", "role": role, "text": text, "finished": finished}
+        if finished:
+            had = self.saw_fragment[role]
+            self.saw_fragment[role] = False
+            return msg, (None if had else text)
+        self.saw_fragment[role] = True
+        return msg, text
 
 
 # ---------- one phone call ----------
@@ -138,27 +234,17 @@ async def ws(websocket: WebSocket):
             if raw:
                 live_request_queue.send_realtime(types.Blob(data=raw, mime_type="audio/pcm;rate=16000"))
 
-    # Transcripts may stream as fragments and then repeat in full with finished=True.
-    # Use the fragments; fall back to the finished text only if no fragments came.
-    saw_fragment = {"user": False, "persona": False}
-
-    def take(role, tr):
-        text = getattr(tr, "text", None) if tr else None
-        if not text:
-            return None
-        if getattr(tr, "finished", False):
-            had = saw_fragment[role]
-            saw_fragment[role] = False
-            return None if had else text
-        saw_fragment[role] = True
-        return text
+    tracker = TranscriptTracker()
 
     async def handle(event):
-        if (text := take("user", getattr(event, "input_transcription", None))):
-            record_user_words(session.id, text)             # K2 grounding: what the user really said
-            await websocket.send_text(json.dumps({"type": "transcript", "role": "user", "text": text}))
-        if (text := take("persona", getattr(event, "output_transcription", None))):
-            await websocket.send_text(json.dumps({"type": "transcript", "role": "persona", "text": text}))
+        msg, heard = tracker.update("user", getattr(event, "input_transcription", None))
+        if heard:
+            record_user_words(session.id, heard)            # K2 grounding: what the user really said
+        if msg:
+            await websocket.send_text(json.dumps(msg))
+        msg, _ = tracker.update("persona", getattr(event, "output_transcription", None))
+        if msg:
+            await websocket.send_text(json.dumps(msg))
         content = getattr(event, "content", None)
         for part in (getattr(content, "parts", None) or []):
             idata = getattr(part, "inline_data", None)
@@ -175,7 +261,7 @@ async def ws(websocket: WebSocket):
             await handle(event)
 
     async def tool_feed():
-        # Tool calls + results -> the browser. For Blitzen, also track which tiers are still
+        # Tool calls + results -> the browser. For the coach, also track which tiers are still
         # open: on an allowed concede the tool updates state right after the callback.
         open_now = list(state.get("open_concerns", []))
         while True:

@@ -1,54 +1,66 @@
-// Build A Friend · booth flow: 1 pick a voice → 2 pick a persona → 3 pick up the phone.
+// Build A Friend · booth flow: 1 pick a voice → 2 pick a persona → 3 the call screen.
+// The call screen has three columns: live transcript · the phone (ring, pick up, timer) · tool calls.
 // Voice plumbing: 16k mic PCM up, 24k voice down, client-side barge-in.
-// Every ADK tool call shows as a card; the Friend Card is the souvenir at the end.
-// Blitzen (free play) also gets the pyramid (answer / because / so what) and its gate verdicts.
+// The Problem Solving Coach (free play) swaps the tool rows for the pyramid gate (answer / because / so what).
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const pad2 = (n) => String(n).padStart(2, "0");
 const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
                 set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
 
 // ---------- state ----------
-let CARDS = { seconds: 90, voices: [], personas: [] };
+let CARDS = { seconds: 90, voices: [], personas: [], links: {} };
 const pick = { voice: null, persona: null };
 let ws, audioCtx, workletNode, micStream;
 let nextStart = 0, activeSources = [], speaking = false, thinking = 0;
-let clock = null, roundStart = 0, ended = false, overtime = false, hangTimer = null;
+// phase: pick → ringing → connecting → live → (wrap) → ended
+let phase = "pick";
+let clock = null, roundStart = 0, ended = false, overtime = false, hangTimer = null, idleTimer = null;
 let friendCard = null;
 const toolsUsed = new Set();
 const BARGE_RMS = 0.02;
-const IDLE_RESET_MS = 60000;
+const IDLE_RESET_S = 60;
 
 const TOOL_UI = {
-  know_it_all: { icon: "🔍", name: "Know-it-all", doing: "looking it up…" },
-  math_whiz: { icon: "🧮", name: "Math Whiz", doing: "running the numbers…" },
-  make_friend_card: { icon: "🪪", name: "Friend Card", doing: "making your card…" },
+  know_it_all: { name: "Know-it-all", fn: "google_search", desc: "Looks up fresh facts on Google Search.", doing: "Looking it up…" },
+  math_whiz: { name: "Math Whiz", fn: "python", desc: "Runs real Python, instantly.", doing: "Calculating…" },
+  make_friend_card: { name: "Friend Card", fn: "make_friend_card", desc: "Makes your souvenir card as the call wraps.", doing: "Making your card…" },
 };
+const TOOL_ORDER = ["know_it_all", "math_whiz", "make_friend_card"];
 
 // ---------- screens ----------
-const SCREENS = ["s-voice", "s-persona", "s-ring", "s-call"];
-const STEP_OF = { "s-voice": "voice", "s-persona": "persona", "s-ring": "call", "s-call": "call" };
+const SCREENS = ["s-voice", "s-persona", "s-call"];
+const STEP_OF = { "s-voice": "voice", "s-persona": "persona", "s-call": "call" };
 function show(id) {
   SCREENS.forEach((s) => ($(s).hidden = s !== id));
+  $("steps").hidden = id === "s-call";
   const order = ["voice", "persona", "call"], cur = order.indexOf(STEP_OF[id]);
   document.querySelectorAll("#steps .s").forEach((el) => {
     const i = order.indexOf(el.dataset.step);
     el.classList.toggle("on", i === cur); el.classList.toggle("done", i < cur);
   });
-  if (id === "s-ring") startRing(); else stopRing();
+  if (id === "s-call" && phase === "ringing") startRing(); else stopRing();
+  window.scrollTo(0, 0);
 }
 
 async function loadCards() {
   try { CARDS = await (await fetch("/cards")).json(); } catch { /* demo / offline: fall back below */ }
   if (!CARDS.voices?.length) CARDS = FALLBACK_CARDS;
+  const links = CARDS.links || {};
+  [["nav-arch", links.architecture], ["nav-slides", links.slides]].forEach(([id, url]) => {
+    if (url) { $(id).href = url; $(id).hidden = false; }
+  });
+
   $("voice-cards").innerHTML = "";
-  CARDS.voices.forEach((v) => {
+  CARDS.voices.forEach((v, i) => {
     const b = document.createElement("button");
-    b.className = "pick";
-    b.innerHTML = `<div class="t">${esc(v.label)}</div><div class="d">${esc(v.vibe)}</div><div class="tag">voice_name="${esc(v.voice)}"</div>`;
+    b.className = "pick"; b.type = "button";
+    b.innerHTML = `<div class="num">${pad2(i + 1)}</div><div class="t">${esc(v.label)}</div><div class="d">${esc(v.vibe)}</div>`
+      + `<div class="tag">voice_name="${esc(v.voice)}"</div><span class="go" aria-hidden="true">↗</span>`;
     const play = document.createElement("span");
-    play.className = "play button"; play.setAttribute("role", "button"); play.setAttribute("aria-label", `Hear ${v.label}`);
+    play.className = "play"; play.setAttribute("role", "button"); play.setAttribute("aria-label", `Hear ${v.label}`);
     play.textContent = "▶";
     play.addEventListener("click", (e) => { e.stopPropagation(); preview(v.id, play); });
     b.appendChild(play);
@@ -56,21 +68,22 @@ async function loadCards() {
     $("voice-cards").appendChild(b);
   });
   $("persona-cards").innerHTML = "";
-  CARDS.personas.forEach((p) => {
+  CARDS.personas.forEach((p, i) => {
     const b = document.createElement("button");
-    b.className = "pick" + (p.pyramid ? " free" : "");
-    b.innerHTML = `<div class="emoji">${p.emoji}</div><div class="t">${esc(p.name)}</div><div class="d">${esc(p.tagline)}</div>`;
-    b.addEventListener("click", () => {
-      pick.persona = p;
-      $("caller-name").textContent = `${p.emoji} ${p.name}`;
-      $("caller-sub").textContent = `is calling, in the ${pick.voice.label} voice`;
-      show("s-ring");
-    });
+    b.className = "pick"; b.type = "button";
+    b.innerHTML = `<div class="num">${pad2(i + 1)}${p.pyramid ? " · free play" : ""}</div><div class="emoji">${p.emoji}</div>`
+      + `<div class="t">${esc(p.name)}</div><div class="d">${esc(p.tagline)}</div><span class="go" aria-hidden="true">↗</span>`;
+    b.addEventListener("click", () => { pick.persona = p; openCall(); });
     $("persona-cards").appendChild(b);
   });
 }
 $("back-voice").addEventListener("click", () => show("s-voice"));
-$("back-persona").addEventListener("click", () => show("s-persona"));
+$("back-persona").addEventListener("click", () => { phase = "pick"; setStatus(); show("s-persona"); });
+$("nav-voice").addEventListener("click", () => {
+  if (phase === "connecting" || phase === "live" || phase === "wrap") return;   // never drop a live call
+  if (phase === "ended") return reset();
+  phase = "pick"; setStatus(); show("s-voice");
+});
 
 // ---------- voice previews ----------
 let previewAudio = null;
@@ -136,29 +149,143 @@ async function setupDevices() {
   $("test-ring").onclick = () => { startRing(); setTimeout(stopRing, 2000); };
 }
 
+// ---------- status: header, handset, line status, meter ----------
+function setStatus() {
+  const live = phase === "live" || phase === "wrap";
+  const mode = ended ? "ended" : !live ? phase : thinking > 0 ? "thinking" : speaking ? "speaking" : ws ? "listening" : "dropped";
+  const TEXT = {
+    pick: ["", "Ready when you are", "The line is open"],
+    ringing: ["ring", "Incoming call", "Ringing"],
+    connecting: ["ring", "Connecting…", "Connecting…"],
+    listening: ["live", overtime ? "Wrapping up" : "Live", "Listening"],
+    speaking: ["live", overtime ? "Wrapping up" : "Live", `${pick.persona?.name || "Your friend"} is speaking`],
+    thinking: ["live", "Live · using a superpower", "Using a superpower"],
+    dropped: ["end", "Line dropped", "The line dropped"],
+    ended: ["end", "Call ended", "Call ended"],
+  }[mode];
+  $("top-dot").className = "dot " + TEXT[0]; $("top-status").textContent = TEXT[1];
+  $("line-dot").className = "dot " + TEXT[0]; $("line-text").textContent = TEXT[2];
+  const h = $("handset");
+  h.classList.toggle("ringing", phase === "ringing");
+  h.classList.toggle("live", live && !ended);
+  h.classList.toggle("speaking", live && !ended && speaking && thinking === 0);
+  h.classList.toggle("thinking", live && !ended && thinking > 0);
+  h.classList.toggle("ended", ended);
+  $("meter").classList.toggle("speaking", live && !ended && speaking);
+}
+// The mic level drives the meter bars (throttled to one paint per frame).
+let meterLevel = 0, meterQueued = false;
+const METER_MULT = [0.6, 1, 1.4, 0.9, 0.5];
+function setMeter(rms) {
+  meterLevel = rms;
+  if (meterQueued || speaking) return;
+  meterQueued = true;
+  requestAnimationFrame(() => {
+    meterQueued = false;
+    const bars = $("meter").children;
+    for (let i = 0; i < bars.length; i++) bars[i].style.height = `${3 + Math.min(10, meterLevel * 160 * METER_MULT[i])}px`;
+  });
+}
+
+// ---------- the call screen ----------
+function openCall() {
+  const p = pick.persona;
+  phase = "ringing";
+  $("eyebrow").textContent = `${p.name} is calling`;
+  $("headline").textContent = "Ready to talk?"; $("headline").classList.remove("long");
+  $("lede").innerHTML = `${esc(p.tagline)}<br>You have ${CARDS.seconds} seconds.${p.pyramid ? " Lead with the answer." : ""}`;
+  $("prompt").innerHTML = "";
+  $("clock").textContent = fmt(CARDS.seconds); $("clock").classList.remove("low");
+  $("pickup").hidden = false; $("pickup").disabled = false;
+  $("pickup").innerHTML = `<span aria-hidden="true">↗</span> Start call`;
+  $("hangup").hidden = true; $("callout").hidden = false; $("back-persona").hidden = false;
+  $("demo-link").hidden = params.get("demo") === "1";
+  $("call-hint").textContent = `${pick.voice.label} voice. Headphones on. Interrupt any time.`;
+  $("empty-big").innerHTML = p.pyramid ? "A little less background.<br>A little more to the point." : esc(p.tagline);
+  renderRight();
+  setStatus();
+  show("s-call");
+}
+
+function enterCall() {
+  phase = "live";
+  const p = pick.persona;
+  $("eyebrow").textContent = `On the line · ${pick.voice.label} voice`;
+  $("headline").textContent = p.name;
+  $("headline").classList.toggle("long", p.name.length > 18);
+  $("lede").textContent = p.pyramid ? "Answer first. Then why. Then so what." : "Talk naturally. Your friend decides when to use a superpower.";
+  $("pickup").hidden = true; $("callout").hidden = true; $("back-persona").hidden = true; $("demo-link").hidden = true;
+  $("hangup").hidden = false; $("hangup").textContent = "Hang up"; $("hangup").onclick = () => endCall();
+  $("call-hint").textContent = "Interrupt any time. Hang up when you're done.";
+  if (p.pyramid) renderPyramid();
+  setStatus();
+}
+
+// ---------- right column: superpower rows, or the coach's gate ----------
+function renderRight() {
+  const coach = pick.persona?.pyramid;
+  $("right-title").textContent = coach ? "The concession gate" : "Superpowers";
+  $("right-sub").innerHTML = coach ? "Warm in tone.<br>Firm on what counts." : "Your friend decides<br>when to use them.";
+  $("activity-title").textContent = coach ? "Gate activity" : "Tool activity";
+  $("right-foot").textContent = coach ? "Evidence before agreement" : "Real ADK tool calls";
+  const items = coach
+    ? ORDER.map((c) => ({ id: c, t: LABEL[c], d: TIER_DESC[c] }))
+    : TOOL_ORDER.map((k) => ({ id: k, t: TOOL_UI[k].name, d: TOOL_UI[k].desc, fn: TOOL_UI[k].fn }));
+  $("rows").innerHTML = items.map((it, i) => `<li class="row" id="row-${it.id}"><span class="n">${pad2(i + 1)}</span>`
+    + `<div><div class="t">${esc(it.t)}</div><div class="d">${esc(it.d)}</div></div><span class="ring" aria-hidden="true"></span></li>`).join("");
+  $("actionlog").innerHTML = coach
+    ? `<div class="empty"><p>No verdicts yet.</p>When the agent accepts a point, the gate checks your actual words first.</div>`
+    : `<div class="empty"><p>No tool calls yet.</p>When your friend decides to use a superpower, the ADK tool call shows up here, live.</div>`;
+  updateCounts();
+}
+function updateCounts() {
+  const coach = pick.persona?.pyramid;
+  const n = coach ? ORDER.filter((c) => landed[c]).length : TOOL_ORDER.filter((t) => toolsUsed.has(t)).length;
+  $("right-count").textContent = `${n} / 3`;
+  $("activity-count").textContent = pad2($("actionlog").querySelectorAll(".act").length);
+  $("turns").textContent = `${pad2($("transcript").querySelectorAll(".line").length)} turns`;
+}
+
 // ---------- transcript ----------
+// The server streams each turn as fragments (finished=false) while someone is talking,
+// then one finished=true message with the full text. Fragments go into a "live" segment;
+// the finished text replaces it and settles it. Demo calls omit `finished` (= settled).
 let lastRole = null, lastBody = null;
-function addLine(role, text) {
-  if ($("transcript").querySelector(".empty")) $("transcript").innerHTML = "";
-  if (role !== lastRole || !lastBody) {
-    const line = document.createElement("div");
-    line.className = "line " + role;
-    line.innerHTML = `<b>${role === "persona" ? esc(pick.persona?.name || "Friend") : "You"}</b>`;
-    lastBody = document.createElement("span");
-    line.appendChild(lastBody);
-    $("transcript").appendChild(line); lastRole = role;
+const liveSeg = { user: null, persona: null };
+const elapsed = () => (roundStart ? fmt((Date.now() - roundStart) / 1000) : "0:00");
+function addLine(role, text, finished = true) {
+  if ($("convo-empty")) $("convo-empty").remove();
+  let seg = liveSeg[role];
+  if (!seg) {
+    if (!text) return;   // an empty close with no live segment: nothing to settle
+    if (role !== lastRole || !lastBody) {
+      const line = document.createElement("div");
+      line.className = "line " + role;
+      line.innerHTML = `<b>${role === "persona" ? esc(pick.persona?.name || "Friend") : "You"}<i>${elapsed()}</i></b>`;
+      lastBody = document.createElement("span");
+      line.appendChild(lastBody);
+      $("transcript").appendChild(line); lastRole = role;
+      updateCounts();
+    }
+    seg = document.createElement("span");
+    seg.className = "seg";
+    if (lastBody.childNodes.length) lastBody.appendChild(document.createTextNode(" "));
+    lastBody.appendChild(seg);
   }
-  lastBody.textContent += text;
+  if (finished) {
+    if (text) seg.textContent = text.trim();   // the finished transcript is authoritative
+    seg.classList.remove("live"); liveSeg[role] = null;
+  } else {
+    seg.textContent += text;
+    seg.classList.add("live"); liveSeg[role] = seg;
+  }
   $("transcript").scrollTop = $("transcript").scrollHeight;
 }
-
-// ---------- avatar status ----------
-function setStatus() {
-  const a = $("avatar");
-  a.className = "avatar " + (ended ? "" : thinking > 0 ? "thinking" : speaking ? "speaking" : ws ? "listening" : "");
+function settleLine(role) {   // e.g. the friend was interrupted: keep what was said so far
+  if (liveSeg[role]) { liveSeg[role].classList.remove("live"); liveSeg[role] = null; }
 }
 
-// ---------- superpower (tool) log ----------
+// ---------- tool activity ----------
 const pendingCards = {};   // tool name -> [result elements waiting]
 function logEl() {
   const el = $("actionlog");
@@ -169,47 +296,63 @@ function summarise(result) {
   if (result == null) return "";
   if (typeof result === "string") return result;
   if (result.card) return `“${result.card.catchphrase}” · ${result.card.verdict}`;
+  if (result.error) return `Couldn't calculate: ${result.error}`;
+  if (result.expression && result.result != null) return `${result.expression} = ${result.result}`;
   if (result.result) return String(result.result);
   return JSON.stringify(result);
 }
+const took = (ms) => (ms == null ? "" : ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`);
+function setToolRow(tool, state) {
+  const row = $("row-" + tool);
+  if (!row || pick.persona?.pyramid) return;
+  row.classList.toggle("pending", state === "pending");
+  if (state === "done") row.classList.add("done");
+}
 function addAction(m) {
   if (m.tool === "concede") return addConcede(m);
-  const ui = TOOL_UI[m.tool] || { icon: "🛠️", name: m.tool, doing: "working…" };
+  const ui = TOOL_UI[m.tool] || { name: m.tool, fn: m.tool, doing: "Working…" };
   const a = m.args || {};
   if (m.phase === "call") {
-    toolsUsed.add(m.tool);
-    thinking++; setStatus();
+    maybeBridge(m.tool);   // backup heads-up, only if the friend called it without saying anything
+    thinking++; setStatus(); setToolRow(m.tool, "pending");
     const div = document.createElement("div");
-    div.className = "act" + (m.tool === "make_friend_card" ? " card-act" : "");
-    const q = a.request || (m.tool === "make_friend_card" ? `for ${a.friend_name || "you"}` : Object.values(a).join(" · "));
-    div.innerHTML = `<div class="h">${ui.icon} ${esc(ui.name)}<span class="fn">${esc(m.tool)}()</span></div>`
+    div.className = "act";
+    const q = a.request || a.expression || (m.tool === "make_friend_card" ? `for ${a.friend_name || "you"}` : Object.values(a).join(" · "));
+    div.innerHTML = `<div class="h"><strong>${esc(ui.name)}</strong><span class="fn">${esc(m.tool)}()</span><span class="at">+${elapsed()}</span></div>`
       + (q ? `<div class="q">“${esc(q)}”</div>` : "") + `<div class="r pending">${esc(ui.doing)}</div>`;
     logEl().appendChild(div);
-    (pendingCards[m.tool] ||= []).push(div.querySelector(".r"));
+    (pendingCards[m.tool] ||= []).push(div);
   } else if (m.phase === "result") {
     thinking = Math.max(0, thinking - 1); setStatus();
-    const r = (pendingCards[m.tool] || []).shift();
+    toolsUsed.add(m.tool); setToolRow(m.tool, "done");
+    const div = (pendingCards[m.tool] || []).shift();
     let text = summarise(m.result);
     if (text.length > 220) text = text.slice(0, 217) + "…";
-    if (r) { r.classList.remove("pending"); r.textContent = text; }
+    if (div) {
+      const r = div.querySelector(".r");
+      r.classList.remove("pending"); r.textContent = text;
+      if (m.ms != null) div.querySelector(".at").textContent += ` · ${took(m.ms)}`;
+    }
     if (m.tool === "make_friend_card" && m.result?.card) gotFriendCard(m.result.card);
   }
+  updateCounts();
   $("actionlog").scrollTop = $("actionlog").scrollHeight;
 }
 
 function gotFriendCard(card) {
   friendCard = card;
   if (overtime) scheduleHangup();
-  else toast(`🪪 Friend Card made for ${card.friend_name}. You'll get it at the end of the call.`);
+  else toast(`Friend Card made for ${card.friend_name}. You'll get it when the call ends.`);
 }
 function toast(text) {
   const t = document.createElement("div"); t.className = "toast"; t.textContent = text;
   document.body.appendChild(t); setTimeout(() => t.remove(), 4000);
 }
 
-// ---------- Blitzen: the pyramid ----------
+// ---------- Problem Solving Coach: the pyramid gate ----------
 const ORDER = ["answer", "because", "so_what"];
 const LABEL = { answer: "Answer", because: "Because", so_what: "So what" };
+const TIER_DESC = { answer: "Take a position. Say it first.", because: "Give a reason to believe it.", so_what: "Make the ask. Name the next step." };
 const NEXT_PROMPT = {
   answer: "What's the answer, <b>in one sentence?</b>",
   because: "Good. Now <b>why should I believe it?</b>",
@@ -222,7 +365,7 @@ const FIX = {
   "too long": "Your answer ran past one sentence. Cut it to the decision alone.",
   "no reason": "You asserted it without a reason. Give one or two, ideally with a number.",
   "no ask": "You never said what you need. End with the ask and a date.",
-  "grounded": "Blitzen tried to give you credit for something you didn't actually say.",
+  "grounded": "The coach tried to give you credit for something you didn't actually say.",
 };
 let open = [...ORDER];
 const landed = {}, blocks = [];
@@ -231,48 +374,49 @@ function renderPyramid() {
   if (!pick.persona?.pyramid) return;
   const current = ORDER.find((c) => open.includes(c));
   ORDER.forEach((c) => {
-    const t = $("tier-" + c);
-    t.classList.toggle("landed", !open.includes(c));
-    t.classList.toggle("current", c === current);
+    const row = $("row-" + c);
+    if (!row) return;
+    row.classList.toggle("done", !open.includes(c));
+    row.classList.toggle("current", c === current);
+    row.querySelector(".q")?.remove();
+    if (landed[c]) {
+      const q = document.createElement("div"); q.className = "q"; q.textContent = `“${landed[c].quote}”`;
+      row.appendChild(q);
+    }
   });
-  $("prompt").innerHTML = NEXT_PROMPT[current || "done"];
-  $("quotes").innerHTML = "";
-  ORDER.filter((c) => landed[c]).forEach((c) => {
-    const q = document.createElement("div");
-    q.className = "quote"; q.innerHTML = `<span>${LABEL[c]}</span>`;
-    q.appendChild(document.createTextNode(`“${landed[c].quote}”`));
-    $("quotes").appendChild(q);
-  });
+  if (!overtime) $("prompt").innerHTML = NEXT_PROMPT[current || "done"];
+  updateCounts();
 }
 function addConcede(m) {
   const a = m.args || {};
   const div = document.createElement("div");
   div.className = "act " + (m.status === "blocked" ? "blocked" : "ok");
-  div.innerHTML = `<div class="h">🔺 The gate<span class="fn">concede()</span></div>`
-    + `<div class="q">${esc(LABEL[a.concern_id] || a.concern_id)}: “${esc(a.quote)}”</div>`
-    + `<div class="r v">${m.status === "blocked" ? "⛔ blocked · " : "✓ landed · "}${esc(m.reason)}</div>`;
+  div.innerHTML = `<div class="h"><strong>${esc(LABEL[a.concern_id] || a.concern_id)}</strong><span class="fn">concede()</span><span class="at">+${elapsed()}</span></div>`
+    + `<div class="q">“${esc(a.quote)}”</div>`
+    + `<div class="r v">${m.status === "blocked" ? "Blocked · " : "Landed · "}${esc(m.reason)}</div>`;
   logEl().appendChild(div);
   $("actionlog").scrollTop = $("actionlog").scrollHeight;
   if (m.status === "ok") landed[a.concern_id] = { quote: a.quote, at: (Date.now() - roundStart) / 1000 };
   else {
     blocks.push(m.reason || "");
-    const t = $("tier-" + a.concern_id);
-    if (t) { t.classList.remove("shake"); void t.offsetWidth; t.classList.add("shake"); }
+    const row = $("row-" + a.concern_id);
+    if (row) { row.classList.remove("shake"); void row.offsetWidth; row.classList.add("shake"); }
   }
   if (m.open) open = m.open;
   renderPyramid();
 }
 
 // ---------- clock + end of call ----------
-const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.max(0, Math.round(s)) % 60).padStart(2, "0")}`;
+const fmt = (s) => { const t = Math.max(0, Math.round(s)); return `${Math.floor(t / 60)}:${pad2(t % 60)}`; };
 function startClock(seconds) {
   roundStart = Date.now();
   let left = seconds; $("clock").textContent = fmt(left);
   clock = setInterval(() => {
-    left -= 1; $("clock").textContent = fmt(Math.max(0, left));
+    left -= 1; $("clock").textContent = fmt(left);
     $("clock").classList.toggle("low", left <= 15);
     if (left <= 0 && !overtime) {
-      overtime = true;
+      overtime = true; phase = "wrap"; setStatus();
+      $("headline").textContent = "That's time.";
       $("prompt").innerHTML = "<b>Time's up.</b> Your friend is saying goodbye…";
       if (friendCard) scheduleHangup();
     }
@@ -292,11 +436,14 @@ function fixFor(reason) {
   return key ? FIX[key] : null;
 }
 function endCall() {
-  if (ended) return; ended = true;
+  if (ended) return; ended = true; phase = "ended";
   clearInterval(clock); clearInterval(hangTimer);
   if (micStream) micStream.getTracks().forEach((t) => t.stop());
   setTimeout(() => { try { ws && ws.close(); } catch {} }, 300);
-  setStatus(); $("hangup").hidden = true;
+  $("hangup").hidden = true;
+  $("headline").textContent = "That's time.";
+  $("prompt").innerHTML = "";
+  setStatus();
 
   const fc = $("friend-card");
   if (friendCard) {
@@ -304,16 +451,16 @@ function endCall() {
     $("fc-name").textContent = friendCard.friend_name;
     $("fc-catch").textContent = `“${friendCard.catchphrase}”`;
     $("fc-verdict").textContent = friendCard.verdict;
-    $("fc-by").textContent = `${pick.persona.emoji} ${pick.persona.name} · ${pick.voice.label} voice`;
+    $("fc-by").textContent = `${pick.persona.name} · ${pick.voice.label} voice · ${fmt((Date.now() - roundStart) / 1000)} on the line`;
     $("card-title").textContent = "Here's your Friend Card";
-    $("card-sub").textContent = "Your friend called make_friend_card() by itself. That's an ADK tool doing something real.";
+    $("card-sub").innerHTML = "Your friend called <code>make_friend_card()</code> by itself. That's an ADK tool doing something real.";
   } else {
     fc.hidden = true;
     $("card-title").textContent = "Call ended";
-    $("card-sub").textContent = "No Friend Card this time. Your friend never got to call make_friend_card().";
+    $("card-sub").innerHTML = "No Friend Card this time. Your friend never got to call <code>make_friend_card()</code>.";
   }
-  const used = [...toolsUsed].map((t) => `${TOOL_UI[t]?.icon || "🛠️"} ${TOOL_UI[t]?.name || t}`);
-  $("card-tools").innerHTML = `<span>Superpowers used</span>${used.length ? esc(used.join(" · ")) : "none this call"}`;
+  $("card-tools").innerHTML = TOOL_ORDER.map((t, i) => `<span class="chip${toolsUsed.has(t) ? "" : " off"}">`
+    + `<span class="mono">${pad2(i + 1)}</span>${esc(TOOL_UI[t].name)}</span>`).join("");
 
   if (pick.persona.pyramid) {
     $("pyramid-result").hidden = false;
@@ -329,12 +476,19 @@ function endCall() {
     $("card-fix").innerHTML = habit ? `<span>${n === 3 ? "One thing to sharpen" : "Try this next time"}</span>${esc(habit)}` : "";
   }
   $("card").classList.add("show");
-  setTimeout(reset, IDLE_RESET_MS);   // booth: back to the start if nobody taps
+  $("again").focus();
+  // booth: back to the start if nobody taps
+  let left = IDLE_RESET_S;
+  $("idle").textContent = `resets in ${left}s`;
+  idleTimer = setInterval(() => { left -= 1; $("idle").textContent = `resets in ${left}s`; if (left <= 0) reset(); }, 1000);
 }
 function reset() { location.href = location.pathname + (params.get("setup") ? "?setup=1" : ""); }
 $("again").addEventListener("click", reset);
-$("close").addEventListener("click", () => { $("card").classList.remove("show"); $("hangup").hidden = false; $("hangup").textContent = "Next visitor"; $("hangup").onclick = reset; });
-$("hangup").addEventListener("click", () => endCall());
+$("close").addEventListener("click", () => {
+  clearInterval(idleTimer);
+  $("card").classList.remove("show");
+  $("hangup").hidden = false; $("hangup").textContent = "Next visitor"; $("hangup").onclick = reset;
+});
 
 // ---------- voice playback (24k PCM) ----------
 function playVoice(buf) {
@@ -345,12 +499,49 @@ function playVoice(buf) {
   ab.getChannelData(0).set(f32);
   const src = audioCtx.createBufferSource();
   src.buffer = ab; src.connect(audioCtx.destination);
+  lastFriendAudioAt = performance.now();
+  queueSource(src, ab.duration);
+}
+// Every sound the friend makes goes through one queue, so barge-in (stopVoice) cuts all of it.
+function queueSource(src, duration) {
   const now = audioCtx.currentTime;
   if (nextStart < now) nextStart = now;
-  src.start(nextStart); nextStart += ab.duration;
+  src.start(nextStart); nextStart += duration;
   activeSources.push(src);
   src.onended = () => { activeSources = activeSources.filter((s) => s !== src); if (!activeSources.length) { speaking = false; setStatus(); } };
-  speaking = true; setStatus();
+  if (!speaking) { speaking = true; setStatus(); }
+}
+
+// ---------- backup heads-up lines ("Wait ah, let me Google that.") ----------
+// The friend is told to narrate a search or sum before calling the tool. If it calls one silently,
+// play a cached line in the same voice so the visitor isn't left in silence. They can talk over it.
+const BRIDGE_TOOLS = new Set(["know_it_all", "math_whiz"]);
+const NARRATED_WITHIN_MS = 1500;
+let lastFriendAudioAt = 0;
+const bridgeBufs = {};   // tool -> [{ buf, text }]
+async function preloadBridges() {
+  const lines = CARDS.bridges || {};
+  for (const [tool, texts] of Object.entries(lines)) {
+    texts.forEach(async (text, n) => {
+      try {
+        const res = await fetch(`/bridge/${pick.voice.id}/${tool}/${n}`);
+        if (!res.ok) return;
+        const buf = await audioCtx.decodeAudioData(await res.arrayBuffer());
+        (bridgeBufs[tool] ||= []).push({ buf, text });
+      } catch { /* no line this time: the friend's own narration still covers it */ }
+    });
+  }
+}
+function maybeBridge(tool) {
+  if (!BRIDGE_TOOLS.has(tool) || !audioCtx || ended) return;
+  const narrated = speaking || liveSeg.persona || performance.now() - lastFriendAudioAt < NARRATED_WITHIN_MS;
+  const options = bridgeBufs[tool];
+  if (narrated || !options?.length) return;
+  const { buf, text } = options[Math.floor(Math.random() * options.length)];
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf; src.connect(audioCtx.destination);
+  queueSource(src, buf.duration);
+  addLine("persona", text);
 }
 function stopVoice() {
   activeSources.forEach((s) => { try { s.stop(); } catch {} });
@@ -367,17 +558,18 @@ function connect() {
   ws.onclose = () => {
     if (ended) return;
     if (overtime || friendCard) return endCall();
-    clearInterval(clock); $("prompt").innerHTML = "The line dropped. <b>Tap Hang up and try again.</b>"; ws = null; setStatus();
+    clearInterval(clock); ws = null; setStatus();
+    $("prompt").innerHTML = "The line dropped. <b>Hang up and try again.</b>";
   };
   ws.onmessage = (evt) => {
     if (typeof evt.data !== "string") { playVoice(evt.data); return; }
     const m = JSON.parse(evt.data);
     if (m.type === "round") { startClock(m.seconds); renderPyramid(); }
-    else if (m.type === "transcript") addLine(m.role, m.text);
+    else if (m.type === "transcript") addLine(m.role, m.text, m.finished !== false);
     else if (m.type === "action") addAction(m);
-    else if (m.type === "interrupted") stopVoice();
+    else if (m.type === "interrupted") { stopVoice(); settleLine("persona"); }
     else if (m.type === "wrap_up") { /* the server told the friend to wrap up */ }
-    else if (m.type === "error") { $("prompt").textContent = "error: " + m.message; console.error(m.message); }
+    else if (m.type === "error") { $("prompt").textContent = "Error: " + m.message; console.error(m.message); }
   };
 }
 
@@ -396,6 +588,7 @@ async function startMic() {
   workletNode.port.onmessage = (e) => {
     if (ws && ws.readyState === WebSocket.OPEN && !ended) ws.send(e.data.pcm);
     if (e.data.rms >= BARGE_RMS && speaking) stopVoice();
+    if (!ended) setMeter(e.data.rms);
   };
   source.connect(workletNode);
   // keep the worklet pulled without sending the mic to the speaker
@@ -403,36 +596,31 @@ async function startMic() {
   workletNode.connect(mute); mute.connect(audioCtx.destination);
 }
 
-function enterCall() {
-  show("s-call");
-  const p = pick.persona;
-  $("avatar").textContent = p.emoji;
-  $("who-name").textContent = p.name;
-  $("who-role").textContent = `${pick.voice.label} voice`;
-  $("pyramid").hidden = $("quotes").hidden = !p.pyramid;
-  $("prompt").innerHTML = p.pyramid ? "" : "Talk naturally. <b>Your friend decides when to use a superpower.</b>";
-  $("hangup").hidden = false; $("foot-hint").textContent = "interrupt any time · hang up when you're done";
-}
-
 async function pickUp() {
-  if (!pick.persona || $("s-ring").hidden) return;
+  if (phase !== "ringing" || $("s-call").hidden) return;
   stopRing();
+  phase = "connecting"; setStatus();
   $("pickup").disabled = true; $("pickup").textContent = "Connecting…";
   try { await startMic(); } catch (e) {
-    $("pickup").disabled = false; $("pickup").textContent = "Pick up";
-    $("caller-sub").textContent = "Microphone blocked. Allow it, then pick up again."; return;
+    phase = "ringing"; setStatus();
+    $("pickup").disabled = false; $("pickup").innerHTML = `<span aria-hidden="true">↗</span> Start call`;
+    $("prompt").innerHTML = "<b>Microphone blocked.</b> Allow it, then start the call again."; return;
   }
   enterCall();
   connect();
+  preloadBridges();
 }
 $("pickup").addEventListener("click", pickUp);
+$("callout").addEventListener("click", pickUp);
 document.addEventListener("keydown", (e) => {
-  if (e.code === "Space" && !$("s-ring").hidden) { e.preventDefault(); pickUp(); }
+  if (e.code === "Space" && phase === "ringing" && !$("s-call").hidden) { e.preventDefault(); pickUp(); }
 });
 
 // ---------- boot ----------
 const FALLBACK_CARDS = {
   seconds: 90,
+  links: { architecture: "", slides: "" },
+  bridges: {},
   voices: [
     { id: "chill_mentor", label: "Chill Mentor", voice: "Charon", vibe: "calm, deep, unhurried" },
     { id: "hype_friend", label: "Hype Friend", voice: "Puck", vibe: "upbeat, energetic" },
@@ -442,7 +630,7 @@ const FALLBACK_CARDS = {
     { id: "elevator_cto", name: "Elevator CTO", tagline: "90 seconds in a lift. Pitch yourself for your next role.", emoji: "🛗", pyramid: false },
     { id: "curious_tech_friend", name: "Curious Tech Friend", tagline: "Just met at a meetup. What are you building?", emoji: "🧋", pyramid: false },
     { id: "voice_agent_know_it_all", name: "Voice Agent Know-it-all", tagline: "Tell it a problem. Should it be a voice agent?", emoji: "🎙️", pyramid: false },
-    { id: "blitzen", name: "Blitzen · Free play", tagline: "Answer first, then why, then so what. Can you land the pyramid?", emoji: "🔺", pyramid: true },
+    { id: "problem_solving_coach", name: "Problem Solving Coach", tagline: "Answer first, then why, then so what. Can you land the pyramid?", emoji: "🔺", pyramid: true },
   ],
 };
 
@@ -457,20 +645,25 @@ function runDemo() {
   pick.voice = CARDS.voices.find((v) => v.id === "hype_friend") || CARDS.voices[0];
   pick.persona = CARDS.personas.find((p) => p.id === "elevator_cto") || CARDS.personas[0];
   const say = (role, text) => () => addLine(role, text);
+  const talk = (ms) => () => { speaking = true; setStatus(); setTimeout(() => { speaking = false; setStatus(); }, ms); };
   const steps = [
-    [300, () => { enterCall(); $("hangup").hidden = true; startClock(CARDS.seconds); }],
-    [600, say("persona", "Eh, morning! Doors closing, you got till the lobby. So what's your next role?")],
+    [200, () => openCall()],
+    [2600, () => { stopRing(); enterCall(); $("hangup").hidden = true; ws = true; setStatus(); startClock(CARDS.seconds); }],
+    [500, talk(1800)], [100, say("persona", "Eh, morning! Doors closing, you got till the lobby. So what's your next role?")],
     [2200, say("user", "I want to lead developer relations for AI tools in Southeast Asia.")],
-    [1500, say("persona", "Okay lah, but did you actually ship anything?")],
+    [900, say("persona", "Okay lah. Wait ah, let me Google the hottest AI dev tool launches this month.")],
+    [300, () => addAction({ tool: "know_it_all", phase: "call", args: { request: "Biggest AI developer tool launches this month" } })],
+    [1400, () => addAction({ tool: "know_it_all", phase: "result", ms: 1380, result: "Voice agents built on Gemini Live and ADK are the big story this month." })],
+    [400, talk(1500)], [100, say("persona", " Voice agents, can. So did you actually ship anything?")],
     [2200, say("user", "I launched a voice agent workshop that 400 developers took, and 60 percent shipped a demo.")],
-    [1200, say("persona", "Wah, 60 percent ah? Let me check what that is in people.")],
-    [400, () => addAction({ tool: "math_whiz", phase: "call", args: { request: "What is 60% of 400?" } })],
-    [2200, () => addAction({ tool: "math_whiz", phase: "result", result: "60% of 400 is 240 developers." })],
-    [500, say("persona", " 240 people shipped something. Shiok. Last one: what do you bring that nobody else does?")],
+    [1200, say("persona", "Wah, 60 percent ah? Let me calculate 60 percent of 400.")],
+    [400, () => addAction({ tool: "math_whiz", phase: "call", args: { expression: "0.6 * 400" } })],
+    [300, () => addAction({ tool: "math_whiz", phase: "result", ms: 3, result: { status: "ok", expression: "0.6 * 400", result: "240" } })],
+    [500, talk(2000)], [100, say("persona", " 240 people shipped something. Shiok. Last one: what do you bring that nobody else does?")],
     [2400, say("user", "I've been a teacher, a PM and a builder, so I can explain it, scope it, and ship it.")],
     [1200, say("persona", "Okay, I like that. Verdict: coffee chat with my Chief of Staff. Let me make your card.")],
     [400, () => addAction({ tool: "make_friend_card", phase: "call", args: { friend_name: "Alex" } })],
-    [1500, () => { overtime = true; addAction({ tool: "make_friend_card", phase: "result",
+    [1500, () => { overtime = true; addAction({ tool: "make_friend_card", phase: "result", ms: 1,
       result: { status: "card_created", card: { friend_name: "Alex", catchphrase: "Explain it, scope it, ship it.", verdict: "Coffee chat with my Chief of Staff." } } }); }],
   ];
   let t = 0; steps.forEach(([d, f]) => { t += d; setTimeout(f, t); });

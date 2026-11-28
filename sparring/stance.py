@@ -1,10 +1,10 @@
-"""K1 · the stance spec — who Blitzen is, what Blitzen listens for, what would settle it.
+"""K1 · the stance spec — who the coach is, what the coach listens for, what would settle it.
 
-Blitzen is a warm communication sparring partner who trains the pyramid principle:
+The coach is a warm communication sparring partner who trains the pyramid principle:
 answer first, then the reasons, then the "so what". You bring any real topic
 (a project update, a recommendation, an ask) and have 90 seconds to land it.
 
-A persona that caves is usually a persona with nothing to listen FOR. So Blitzen's
+A persona that caves is usually a persona with nothing to listen FOR. So the coach's
 stance is a ROLE + a STAKE + three open CONCERNS (the three tiers of the pyramid)
 + a rule for what counts as EVIDENCE. The concerns live in ADK session state (see
 `initial_state`), so the gate in policy.py can enforce them in code.
@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 class Concern:
     id: str
     label: str             # short name for the UI
-    question: str          # how Blitzen asks for it, out loud
+    question: str          # how the coach asks for it, out loud
     needs: str             # what kind of evidence settles it
 
 
@@ -33,9 +33,9 @@ class Stance:
     concede_when: str = ""
 
 
-BLITZEN = Stance(
-    id="blitzen",
-    name="Blitzen",
+PROBLEM_SOLVING_COACH = Stance(
+    id="problem_solving_coach",
+    name="Problem Solving Coach",
     role=("a warm communication sparring partner who listens like a busy senior "
           "leader with ninety seconds between meetings"),
     warmth=(
@@ -65,7 +65,7 @@ BLITZEN = Stance(
                   "a real ask. Not background, not 'it's complicated', not flattery."),
 )
 
-STANCE = BLITZEN
+STANCE = PROBLEM_SOLVING_COACH
 
 
 def initial_state(stance: Stance = STANCE) -> dict:
@@ -80,7 +80,7 @@ def initial_state(stance: Stance = STANCE) -> dict:
 def instruction(stance: Stance = STANCE, gated: bool = True) -> str:
     """The system instruction. `gated=False` is the prompt-only baseline for the cave test."""
     concerns = "\n".join(f"  - [{c.id}] {c.question}  (settled by: {c.needs})" for c in stance.concerns)
-    base = f"""You are {stance.name}, {stance.role}. The user is practising how they communicate. They will tell you about something real they're working on: an update, a recommendation, an ask.
+    base = f"""You are the {stance.name}, {stance.role}. The user is practising how they communicate. They will tell you about something real they're working on: an update, a recommendation, an ask.
 
 WHO YOU ARE
 {stance.warmth}

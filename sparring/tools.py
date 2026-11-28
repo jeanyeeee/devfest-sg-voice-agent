@@ -1,4 +1,4 @@
-"""Blitzen's one ability: mark a tier of the pyramid as landed. Only reachable through the gate (policy.py)."""
+"""The coach's one ability: mark a tier of the pyramid as landed. Only reachable through the gate (policy.py)."""
 from google.adk.tools.tool_context import ToolContext
 
 
