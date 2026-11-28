@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
@@ -40,12 +41,13 @@ from sparring.personas import (BRIDGE_LINES, DEFAULT_PERSONA, DEFAULT_VOICE, PER
                                WRAP_UP, opener)
 from sparring.policy import forget_session, listen, record_user_words
 from sparring.stance import STANCE, initial_state
+from sparring.superpowers import write_friend_card
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(APP_NAME)
 
-ROUND_SECONDS = int(os.getenv("ROUND_SECONDS", "90"))
-WRAP_LEAD_SECONDS = int(os.getenv("WRAP_LEAD_SECONDS", "20"))
+ROUND_SECONDS = int(os.getenv("ROUND_SECONDS", "120"))
+WRAP_LEAD_SECONDS = int(os.getenv("WRAP_LEAD_SECONDS", "25"))
 GRACE_SECONDS = int(os.getenv("GRACE_SECONDS", "20"))
 TTS_MODEL = os.getenv("TTS_MODEL", "gemini-2.5-flash-preview-tts")
 SAMPLE_CACHE = Path(__file__).resolve().parent / ".cache" / "voice_samples"
@@ -93,7 +95,8 @@ async def cards():
         "voices": [{"id": v.id, "label": v.label, "voice": v.voice_name, "vibe": v.vibe}
                    for v in VOICE_CARDS.values()],
         "personas": [{"id": p.id, "name": p.name, "tagline": p.tagline, "emoji": p.emoji,
-                      "pyramid": p.pyramid} for p in PERSONA_CARDS.values()],
+                      "pyramid": p.pyramid, "superpowers": list(p.superpowers)}
+                     for p in PERSONA_CARDS.values()],
         # header links; each is hidden in the UI while empty
         "links": {"architecture": os.getenv("ARCH_URL", ""), "slides": os.getenv("SLIDES_URL", "")},
         "bridges": {tool: list(lines) for tool, lines in BRIDGE_LINES.items()},
@@ -140,7 +143,8 @@ async def voice_sample(voice_id: str):
     if not v:
         raise HTTPException(404, "unknown voice")
     try:
-        wav = await _tts_wav(voice_id, v.sample, SAMPLE_CACHE / f"{voice_id}.wav")
+        digest = hashlib.sha1(f"{v.voice_name}|{v.sample}".encode()).hexdigest()[:8]
+        wav = await _tts_wav(voice_id, v.sample, SAMPLE_CACHE / f"{voice_id}-{digest}.wav")   # new wording = new file
     except Exception as e:
         log.warning("voice sample failed for %s: %r", voice_id, e)
         raise HTTPException(503, "voice sample unavailable")
@@ -158,6 +162,29 @@ async def bridge(voice_id: str, tool: str, n: int):
         log.warning("bridge line failed for %s/%s/%d: %r", voice_id, tool, n, e)
         raise HTTPException(503, "bridge line unavailable")
     return Response(wav, media_type="audio/wav", headers={"Cache-Control": "public, max-age=86400"})
+
+
+# ---------- the guaranteed Friend Card ----------
+
+class TranscriptLine(BaseModel):
+    role: str = Field(max_length=16)
+    text: str = Field(max_length=2000)
+
+
+class CardRequest(BaseModel):
+    persona: str
+    transcript: list[TranscriptLine] = Field(default_factory=list, max_length=200)
+
+
+@app.post("/friend-card")
+async def friend_card(req: CardRequest):
+    """The friend hung up without calling make_friend_card: Flash-Lite writes one from the transcript."""
+    p = PERSONA_CARDS.get(req.persona)
+    if not p:
+        raise HTTPException(404, "unknown persona")
+    card, source = await write_friend_card(p.name, [t.model_dump() for t in req.transcript])
+    log.info("friend card written by %s for persona=%s", source, req.persona)
+    return {"card": card, "source": source}
 
 
 # ---------- live transcripts ----------
@@ -217,7 +244,8 @@ async def ws(websocket: WebSocket):
 
     await websocket.send_text(json.dumps({
         "type": "round", "seconds": ROUND_SECONDS,
-        "persona": {"id": persona.id, "name": persona.name, "emoji": persona.emoji, "pyramid": persona.pyramid},
+        "persona": {"id": persona.id, "name": persona.name, "emoji": persona.emoji, "pyramid": persona.pyramid,
+                    "superpowers": list(persona.superpowers)},
         "voice": {"id": voice, "label": VOICE_CARDS[voice].label},
         "concerns": ([{"id": c.id, "label": c.label, "question": c.question} for c in STANCE.concerns]
                      if persona.pyramid else []),

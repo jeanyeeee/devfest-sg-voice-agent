@@ -11,7 +11,7 @@ const store = { get: (k) => { try { return localStorage.getItem(k); } catch { re
                 set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
 
 // ---------- state ----------
-let CARDS = { seconds: 90, voices: [], personas: [], links: {} };
+let CARDS = { seconds: 120, voices: [], personas: [], links: {} };
 const pick = { voice: null, persona: null };
 let ws, audioCtx, workletNode, micStream;
 let nextStart = 0, activeSources = [], speaking = false, thinking = 0;
@@ -20,15 +20,22 @@ let phase = "pick";
 let clock = null, roundStart = 0, ended = false, overtime = false, hangTimer = null, idleTimer = null;
 let friendCard = null;
 const toolsUsed = new Set();
+// Every function call of the call, in order, for the end-screen card: { tool, at, q, result, ms, status }.
+const activity = [];
+const pendingActs = {};   // tool name -> [activity entries waiting for their result]
 const BARGE_RMS = 0.02;
 const IDLE_RESET_S = 60;
 
 const TOOL_UI = {
   know_it_all: { name: "Know-it-all", fn: "google_search", desc: "Looks up fresh facts on Google Search.", doing: "Looking it up…" },
   math_whiz: { name: "Math Whiz", fn: "python", desc: "Runs real Python, instantly.", doing: "Calculating…" },
+  pitch_polisher: { name: "Pitch Polisher", fn: "flash-lite · structured", desc: "Gemini Flash-Lite sharpens your pitch into one line.", doing: "Polishing your pitch…" },
+  agent_blueprint: { name: "Agent Blueprint", fn: "flash-lite · structured", desc: "Gemini Flash-Lite sketches your voice agent as a spec card.", doing: "Sketching your agent…" },
   make_friend_card: { name: "Friend Card", fn: "make_friend_card", desc: "Makes your souvenir card as the call wraps.", doing: "Making your card…" },
 };
-const TOOL_ORDER = ["know_it_all", "math_whiz", "make_friend_card"];
+// Each persona brings its own superpowers (/cards and the round message carry the list).
+const DEFAULT_TOOLS = ["know_it_all", "math_whiz", "make_friend_card"];
+const toolOrder = () => (pick.persona?.superpowers?.length ? pick.persona.superpowers : DEFAULT_TOOLS).filter((t) => TOOL_UI[t]);
 
 // ---------- screens ----------
 const SCREENS = ["s-voice", "s-persona", "s-call"];
@@ -230,7 +237,7 @@ function renderRight() {
   $("right-foot").textContent = coach ? "Evidence before agreement" : "Real ADK tool calls";
   const items = coach
     ? ORDER.map((c) => ({ id: c, t: LABEL[c], d: TIER_DESC[c] }))
-    : TOOL_ORDER.map((k) => ({ id: k, t: TOOL_UI[k].name, d: TOOL_UI[k].desc, fn: TOOL_UI[k].fn }));
+    : toolOrder().map((k) => ({ id: k, t: TOOL_UI[k].name, d: TOOL_UI[k].desc, fn: TOOL_UI[k].fn }));
   $("rows").innerHTML = items.map((it, i) => `<li class="row" id="row-${it.id}"><span class="n">${pad2(i + 1)}</span>`
     + `<div><div class="t">${esc(it.t)}</div><div class="d">${esc(it.d)}</div></div><span class="ring" aria-hidden="true"></span></li>`).join("");
   $("actionlog").innerHTML = coach
@@ -240,8 +247,9 @@ function renderRight() {
 }
 function updateCounts() {
   const coach = pick.persona?.pyramid;
-  const n = coach ? ORDER.filter((c) => landed[c]).length : TOOL_ORDER.filter((t) => toolsUsed.has(t)).length;
-  $("right-count").textContent = `${n} / 3`;
+  const total = coach ? ORDER.length : toolOrder().length;
+  const n = coach ? ORDER.filter((c) => landed[c]).length : toolOrder().filter((t) => toolsUsed.has(t)).length;
+  $("right-count").textContent = `${n} / ${total}`;
   $("activity-count").textContent = pad2($("actionlog").querySelectorAll(".act").length);
   $("turns").textContent = `${pad2($("transcript").querySelectorAll(".line").length)} turns`;
 }
@@ -301,6 +309,33 @@ function summarise(result) {
   if (result.result) return String(result.result);
   return JSON.stringify(result);
 }
+// The Flash-Lite sub-agents answer with structured output (a dict, or its JSON as a string).
+function asObject(result) {
+  if (result && typeof result === "object") return result;
+  try { const o = JSON.parse(result); return o && typeof o === "object" ? o : null; } catch { return null; }
+}
+function structuredCard(tool, result) {
+  const o = asObject(result);
+  if (tool === "pitch_polisher" && o?.one_liner) {
+    const tiers = [["Answer", o.answer], ["Because", o.because], ["So what", o.so_what]].filter(([, v]) => v);
+    return `<div class="mini"><div class="mini-big">“${esc(o.one_liner)}”</div>`
+      + tiers.map(([k, v]) => `<div class="mini-row"><span>${k}</span>${esc(v)}</div>`).join("") + `</div>`;
+  }
+  if (tool === "agent_blueprint" && o?.agent_name) {
+    return `<div class="mini"><div class="mini-big">${esc(o.agent_name)}</div>`
+      + [["Hears", o.hears], ["Does", o.does], ["Calls", o.tool], ["Verdict", o.verdict]]
+          .filter(([, v]) => v).map(([k, v]) => `<div class="mini-row"><span>${k}</span>${esc(v)}</div>`).join("")
+      + `</div>`;
+  }
+  return null;
+}
+// One short line per result for the end-screen card.
+function activitySummary(tool, result, text) {
+  const o = asObject(result);
+  if (tool === "pitch_polisher" && o?.one_liner) return `“${o.one_liner}”`;
+  if (tool === "agent_blueprint" && o?.agent_name) return `${o.agent_name} · ${o.verdict || ""}`;
+  return text.length > 120 ? text.slice(0, 117) + "…" : text;
+}
 const took = (ms) => (ms == null ? "" : ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`);
 function setToolRow(tool, state) {
   const row = $("row-" + tool);
@@ -322,15 +357,21 @@ function addAction(m) {
       + (q ? `<div class="q">“${esc(q)}”</div>` : "") + `<div class="r pending">${esc(ui.doing)}</div>`;
     logEl().appendChild(div);
     (pendingCards[m.tool] ||= []).push(div);
+    const entry = { tool: m.tool, at: elapsed(), q, result: null, ms: null, status: "pending" };
+    activity.push(entry); (pendingActs[m.tool] ||= []).push(entry);
   } else if (m.phase === "result") {
     thinking = Math.max(0, thinking - 1); setStatus();
     toolsUsed.add(m.tool); setToolRow(m.tool, "done");
     const div = (pendingCards[m.tool] || []).shift();
     let text = summarise(m.result);
     if (text.length > 220) text = text.slice(0, 217) + "…";
+    const card = structuredCard(m.tool, m.result);
+    const entry = (pendingActs[m.tool] || []).shift();
+    if (entry) { entry.result = activitySummary(m.tool, m.result, text); entry.ms = m.ms; entry.status = "ok"; }
     if (div) {
       const r = div.querySelector(".r");
-      r.classList.remove("pending"); r.textContent = text;
+      r.classList.remove("pending");
+      if (card) r.innerHTML = card; else r.textContent = text;
       if (m.ms != null) div.querySelector(".at").textContent += ` · ${took(m.ms)}`;
     }
     if (m.tool === "make_friend_card" && m.result?.card) gotFriendCard(m.result.card);
@@ -396,6 +437,8 @@ function addConcede(m) {
     + `<div class="r v">${m.status === "blocked" ? "Blocked · " : "Landed · "}${esc(m.reason)}</div>`;
   logEl().appendChild(div);
   $("actionlog").scrollTop = $("actionlog").scrollHeight;
+  activity.push({ tool: "concede", at: elapsed(), q: `${LABEL[a.concern_id] || a.concern_id}: “${a.quote || ""}”`,
+                  result: `${m.status === "blocked" ? "Blocked" : "Landed"} · ${m.reason || ""}`, ms: null, status: m.status });
   if (m.status === "ok") landed[a.concern_id] = { quote: a.quote, at: (Date.now() - roundStart) / 1000 };
   else {
     blocks.push(m.reason || "");
@@ -445,22 +488,17 @@ function endCall() {
   $("prompt").innerHTML = "";
   setStatus();
 
-  const fc = $("friend-card");
-  if (friendCard) {
-    fc.hidden = false;
-    $("fc-name").textContent = friendCard.friend_name;
-    $("fc-catch").textContent = `“${friendCard.catchphrase}”`;
-    $("fc-verdict").textContent = friendCard.verdict;
-    $("fc-by").textContent = `${pick.persona.name} · ${pick.voice.label} voice · ${fmt((Date.now() - roundStart) / 1000)} on the line`;
-    $("card-title").textContent = "Here's your Friend Card";
-    $("card-sub").innerHTML = "Your friend called <code>make_friend_card()</code> by itself. That's an ADK tool doing something real.";
-  } else {
-    fc.hidden = true;
-    $("card-title").textContent = "Call ended";
-    $("card-sub").innerHTML = "No Friend Card this time. Your friend never got to call <code>make_friend_card()</code>.";
+  const onLine = fmt((Date.now() - roundStart) / 1000);
+  $("fc-by").textContent = `${pick.persona.name} · ${pick.voice.label} voice · ${onLine} on the line`;
+  if (friendCard) showFriendCard(friendCard, "tool");
+  else {
+    // Every call gets a card: the friend didn't make one, so Gemini Flash-Lite writes it from the transcript.
+    showFriendCard({ friend_name: "Writing your card…", catchphrase: "", verdict: "" }, "pending");
+    writeMissingCard().then((r) => showFriendCard(r.card, r.source));
   }
-  $("card-tools").innerHTML = TOOL_ORDER.map((t, i) => `<span class="chip${toolsUsed.has(t) ? "" : " off"}">`
+  $("card-tools").innerHTML = toolOrder().map((t, i) => `<span class="chip${toolsUsed.has(t) ? "" : " off"}">`
     + `<span class="mono">${pad2(i + 1)}</span>${esc(TOOL_UI[t].name)}</span>`).join("");
+  renderActivity();
 
   if (pick.persona.pyramid) {
     $("pyramid-result").hidden = false;
@@ -481,6 +519,47 @@ function endCall() {
   let left = IDLE_RESET_S;
   $("idle").textContent = `resets in ${left}s`;
   idleTimer = setInterval(() => { left -= 1; $("idle").textContent = `resets in ${left}s`; if (left <= 0) reset(); }, 1000);
+}
+function showFriendCard(card, source) {
+  $("fc-name").textContent = card.friend_name;
+  $("fc-catch").textContent = card.catchphrase ? `“${card.catchphrase}”` : "";
+  $("fc-verdict").textContent = card.verdict || "";
+  $("friend-card").classList.toggle("pending", source === "pending");
+  $("card-title").textContent = "Here's your Friend Card";
+  $("card-sub").innerHTML = {
+    tool: "Your friend called <code>make_friend_card()</code> by itself. That's an ADK tool doing something real.",
+    "flash-lite": "Your friend ran out of time, so <code>gemini-2.5-flash-lite</code> wrote this card from your conversation, with structured output.",
+    template: "Your friend ran out of time, so here's a card to remember the call.",
+    pending: "Your friend ran out of time, so <code>gemini-2.5-flash-lite</code> is writing your card from the conversation…",
+  }[source] || "";
+}
+function transcriptLines() {
+  return [...document.querySelectorAll("#transcript .line")].map((l) => ({
+    role: l.classList.contains("user") ? "user" : "persona",
+    text: (l.querySelector("span")?.textContent || "").slice(0, 2000),
+  })).filter((t) => t.text.trim()).slice(-200);
+}
+async function writeMissingCard() {
+  const transcript = transcriptLines();
+  const said = transcript.filter((t) => t.role === "user").pop()?.text || "Hello?";
+  const template = { card: { friend_name: "Mystery Friend", catchphrase: said.split(/\s+/).slice(0, 12).join(" "),
+                             verdict: "Thanks for calling. Come back anytime!" }, source: "template" };
+  if (params.get("demo") === "1") return template;
+  try {
+    const res = await fetch("/friend-card", { method: "POST", headers: { "Content-Type": "application/json" },
+                                              body: JSON.stringify({ persona: pick.persona.id, transcript }) });
+    if (!res.ok) throw new Error(res.status);
+    return await res.json();
+  } catch { return template; }
+}
+function renderActivity() {
+  $("card-activity-count").textContent = activity.length ? `${activity.length} call${activity.length > 1 ? "s" : ""}` : "";
+  $("card-activity").innerHTML = activity.length
+    ? activity.map((e) => `<li class="${e.status === "blocked" ? "blocked" : ""}"><span class="t">+${esc(e.at)}</span>`
+        + `<div><code>${esc(e.tool)}()</code>${e.q ? ` <span class="q">${esc(e.q)}</span>` : ""}`
+        + `<div class="r">${e.result == null ? "No result before the call ended." : esc(e.result)}`
+        + `${e.ms != null ? ` <span class="ms">· ${esc(took(e.ms))}</span>` : ""}</div></div></li>`).join("")
+    : `<li class="none">No function calls this time.</li>`;
 }
 function reset() { location.href = location.pathname + (params.get("setup") ? "?setup=1" : ""); }
 $("again").addEventListener("click", reset);
@@ -515,7 +594,7 @@ function queueSource(src, duration) {
 // ---------- backup heads-up lines ("Wait ah, let me Google that.") ----------
 // The friend is told to narrate a search or sum before calling the tool. If it calls one silently,
 // play a cached line in the same voice so the visitor isn't left in silence. They can talk over it.
-const BRIDGE_TOOLS = new Set(["know_it_all", "math_whiz"]);
+const BRIDGE_TOOLS = new Set(["know_it_all", "math_whiz", "pitch_polisher", "agent_blueprint"]);
 const NARRATED_WITHIN_MS = 1500;
 let lastFriendAudioAt = 0;
 const bridgeBufs = {};   // tool -> [{ buf, text }]
@@ -564,7 +643,10 @@ function connect() {
   ws.onmessage = (evt) => {
     if (typeof evt.data !== "string") { playVoice(evt.data); return; }
     const m = JSON.parse(evt.data);
-    if (m.type === "round") { startClock(m.seconds); renderPyramid(); }
+    if (m.type === "round") {
+      if (m.persona?.superpowers) { pick.persona = { ...pick.persona, superpowers: m.persona.superpowers }; renderRight(); }
+      startClock(m.seconds); renderPyramid();
+    }
     else if (m.type === "transcript") addLine(m.role, m.text, m.finished !== false);
     else if (m.type === "action") addAction(m);
     else if (m.type === "interrupted") { stopVoice(); settleLine("persona"); }
@@ -618,7 +700,7 @@ document.addEventListener("keydown", (e) => {
 
 // ---------- boot ----------
 const FALLBACK_CARDS = {
-  seconds: 90,
+  seconds: 120,
   links: { architecture: "", slides: "" },
   bridges: {},
   voices: [
@@ -627,10 +709,14 @@ const FALLBACK_CARDS = {
     { id: "sharp_exec", label: "Sharp Exec", voice: "Kore", vibe: "crisp, confident" },
   ],
   personas: [
-    { id: "elevator_cto", name: "Elevator CTO", tagline: "90 seconds in a lift. Pitch yourself for your next role.", emoji: "🛗", pyramid: false },
-    { id: "curious_tech_friend", name: "Curious Tech Friend", tagline: "Just met at a meetup. What are you building?", emoji: "🧋", pyramid: false },
-    { id: "voice_agent_know_it_all", name: "Voice Agent Know-it-all", tagline: "Tell it a problem. Should it be a voice agent?", emoji: "🎙️", pyramid: false },
-    { id: "problem_solving_coach", name: "Problem Solving Coach", tagline: "Answer first, then why, then so what. Can you land the pyramid?", emoji: "🔺", pyramid: true },
+    { id: "elevator_cto", name: "Elevator CTO", tagline: "Two minutes in a lift. Pitch yourself for your next role.", emoji: "🛗", pyramid: false,
+      superpowers: ["know_it_all", "math_whiz", "pitch_polisher", "make_friend_card"] },
+    { id: "curious_tech_friend", name: "Curious Tech Friend", tagline: "Just met at a meetup. What are you building?", emoji: "🧋", pyramid: false,
+      superpowers: ["know_it_all", "pitch_polisher", "make_friend_card"] },
+    { id: "voice_agent_know_it_all", name: "Voice Agent Know-it-all", tagline: "Tell it a problem. Should it be a voice agent?", emoji: "🎙️", pyramid: false,
+      superpowers: ["know_it_all", "agent_blueprint", "make_friend_card"] },
+    { id: "problem_solving_coach", name: "Problem Solving Coach", tagline: "Answer first, then why, then so what. Can you land the pyramid?", emoji: "🔺", pyramid: true,
+      superpowers: ["know_it_all", "math_whiz", "pitch_polisher", "make_friend_card"] },
   ],
 };
 
@@ -661,7 +747,15 @@ function runDemo() {
     [300, () => addAction({ tool: "math_whiz", phase: "result", ms: 3, result: { status: "ok", expression: "0.6 * 400", result: "240" } })],
     [500, talk(2000)], [100, say("persona", " 240 people shipped something. Shiok. Last one: what do you bring that nobody else does?")],
     [2400, say("user", "I've been a teacher, a PM and a builder, so I can explain it, scope it, and ship it.")],
-    [1200, say("persona", "Okay, I like that. Verdict: coffee chat with my Chief of Staff. Let me make your card.")],
+    [1000, say("persona", "Okay, let me sharpen your pitch while you think about your ask.")],
+    [300, () => addAction({ tool: "pitch_polisher", phase: "call", args: { request: "DevRel lead for AI tools in SEA; ran a voice agent workshop for 400 devs, 60% shipped; teacher, PM and builder." } })],
+    [1200, () => addAction({ tool: "pitch_polisher", phase: "result", ms: 1150, result: {
+      one_liner: "I turn developers into shippers: 240 of my 400 workshop devs shipped a voice agent.",
+      answer: "I want to lead AI developer relations in Southeast Asia.",
+      because: "60 percent of my 400 workshop developers shipped a demo.",
+      so_what: "A coffee chat with your DevRel lead this week." } })],
+    [400, talk(1800)], [100, say("persona", " Here's your pitch, sharper: you turn developers into shippers.")],
+    [1600, say("persona", "Okay, I like that. Verdict: coffee chat with my Chief of Staff. Let me make your card.")],
     [400, () => addAction({ tool: "make_friend_card", phase: "call", args: { friend_name: "Alex" } })],
     [1500, () => { overtime = true; addAction({ tool: "make_friend_card", phase: "result", ms: 1,
       result: { status: "card_created", card: { friend_name: "Alex", catchphrase: "Explain it, scope it, ship it.", verdict: "Coffee chat with my Chief of Staff." } } }); }],

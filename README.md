@@ -4,15 +4,28 @@ A DevFest 2026 booth built on **Google ADK** + the **Gemini Live API**. A visito
 
 1. **Pick a voice.** Chill Mentor (`Charon`), Hype Friend (`Puck`) or Sharp Exec (`Kore`). This is the Gemini Live speech config.
 2. **Pick a persona.** Elevator CTO, Curious Tech Friend, Voice Agent Know-it-all, or **Problem Solving Coach** (the pyramid-principle sparring partner from the talk). This is the agent instruction.
-3. **Pick up the phone** and talk for about 90 seconds. Every persona has the same **superpowers** (ADK tools) and decides by itself when to use them:
+3. **Pick up the phone** and talk for about two minutes. Each persona brings its own combination of **superpowers** (ADK tools) and decides by itself when to use them:
 
 | Superpower | ADK tool | At the booth |
 |---|---|---|
 | 🔍 Know-it-all | `google_search`, wrapped as an `AgentTool` (Flash-Lite, thinking off, ~1-2 s) | live facts, like "what launched at I/O this year?" |
 | 🧮 Math Whiz | function tool `math_whiz`: real Python, evaluated locally and safely (instant) | exact sums mid-chat, like "what's my runway?" |
+| ✨ Pitch Polisher | `AgentTool` over Flash-Lite with a Pydantic `output_schema` (`PolishedPitch`) | your pitch back as one sharp line + answer / because / so what, shown as a card |
+| 📐 Agent Blueprint | `AgentTool` over Flash-Lite with a Pydantic `output_schema` (`AgentBlueprint`) | a voice-agent spec card: what it hears, does, which tool it calls, does voice fit |
 | 🪪 Friend Card | custom function tool `make_friend_card` | the souvenir card shown when the call ends |
 
-Before a search or a sum, the friend says what it's about to do ("Wait ah, let me Google what launched at I/O"), so the visitor can cut in. If it calls a tool without a word, the booth plays a short cached line in the friend's voice instead (`BRIDGE_LINES` in `personas.py`, made with Gemini TTS at startup). Each tool call shows up on screen as it happens, with how long it took. About 20 seconds before time, the server tells the friend to wrap up and make the Friend Card.
+| Persona | Superpowers |
+|---|---|
+| Elevator CTO | Know-it-all, Math Whiz, Pitch Polisher, Friend Card |
+| Curious Tech Friend | Know-it-all, Pitch Polisher, Friend Card |
+| Voice Agent Know-it-all | Know-it-all, Agent Blueprint, Friend Card |
+| Problem Solving Coach | Know-it-all, Math Whiz, Pitch Polisher, Friend Card (+ `concede`) |
+
+The Flash-Lite sub-agents are **non-blocking** on Gemini Live (`behavior=NON_BLOCKING`, `response_scheduling=WHEN_IDLE`): the friend keeps talking while they run and works the result in when it's free. Math Whiz and the Friend Card stay blocking.
+
+Before a search or a sum, the friend says what it's about to do ("Wait ah, let me Google what launched at I/O"), so the visitor can cut in. If it calls a tool without a word, the booth plays a short cached line in the friend's voice instead (`BRIDGE_LINES` in `personas.py`, made with Gemini TTS at startup). Each tool call shows up on screen as it happens, with how long it took. About 25 seconds before time, the server tells the friend to wrap up and make the Friend Card.
+
+**Every call ends with a Friend Card.** If the friend never called `make_friend_card`, the browser posts the transcript to `POST /friend-card` and Gemini Flash-Lite writes the card with structured output (`FriendCard` in `superpowers.py`); if that fails, a template card is used. The end screen shows the card, the persona's superpowers (used ones lit up), and the tool activity: every function call in order, with what was asked, the result and how long it took.
 
 The wording of the voice and persona cards comes from the **Build A Friend: Booth Config** doc; it lives in [`sparring/personas.py`](sparring/personas.py). The tools are in [`sparring/superpowers.py`](sparring/superpowers.py).
 
@@ -54,13 +67,13 @@ uv run uvicorn sparring.server:app --port 8024
 
 1. Plug in the USB handset and open <http://localhost:8024/?setup=1>. Choose the handset as **Microphone** and **Speaker** (saved in the browser), and press **Test ring**. In browsers that can't pick a speaker, make the handset the system output instead.
 2. Visitors use <http://localhost:8024>: pick a voice (▶ plays a sample), pick a persona, the phone rings, lift the handset and press **Pick up** (or Space).
-3. The call ends with the Friend Card. **Next visitor** (or 60 seconds of no taps) goes back to step 1.
+3. The call ends with the Friend Card, the superpowers and the full tool activity. **Next visitor** (or 60 seconds of no taps) goes back to step 1.
 
 With the coach, try both:
 - Start with *"So, a bit of background first…"* and keep going → blocked, "not first"
 - Start with *"We should cut onboarding from five steps to two by March."* → the answer lands
 
-Settings (all optional, in `.env`): `LIVE_MODEL`, `TOOL_MODEL` (the model behind Know-it-all, default `gemini-2.5-flash-lite`), `TOOL_THINKING_BUDGET` (default `0`, thinking off), `BRIDGE_WARM` (default `1`: make the backup heads-up lines at startup), `TTS_MODEL` (voice samples), `ROUND_SECONDS`, `WRAP_LEAD_SECONDS`, `GRACE_SECONDS`.
+Settings (all optional, in `.env`): `LIVE_MODEL`, `TOOL_MODEL` (the model behind the Flash-Lite sub-agents, default `gemini-2.5-flash-lite`), `TOOL_THINKING_BUDGET` (default `0`, thinking off), `NON_BLOCKING_TOOLS` (default `1`; set `0` if the live model rejects asynchronous function calls), `BRIDGE_WARM` (default `1`: make the backup heads-up lines at startup), `TTS_MODEL` (voice samples), `ROUND_SECONDS`, `WRAP_LEAD_SECONDS`, `GRACE_SECONDS`.
 `ARCH_URL` and `SLIDES_URL` fill the **Architecture ↗** and **Slides ↗** links in the header (each link is hidden while unset).
 
 ### Preview the UI without a mic
@@ -107,7 +120,7 @@ The pattern works for any framework your team already uses: a review checklist, 
 devfest-voice-agent/
 ├── sparring/
 │   ├── personas.py      booth stations 1 + 2: voice cards, BASE + persona instructions
-│   ├── superpowers.py   booth station 3: know_it_all, math_whiz, make_friend_card
+│   ├── superpowers.py   booth station 3: the CATALOG of superpowers (know_it_all, pitch_polisher, agent_blueprint, math_whiz, make_friend_card)
 │   ├── agent.py         build_friend(voice, persona) + the coach's cave-test baseline
 │   ├── stance.py        K1 · the coach: role, warmth, stake, the pyramid as concerns
 │   ├── policy.py        K2 · the concession gate + the tool-call log for the UI

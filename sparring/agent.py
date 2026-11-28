@@ -1,8 +1,8 @@
-"""Assembling the friend: one voice + one persona + all the superpowers.
+"""Assembling the friend: one voice + one persona + that persona's superpowers.
 
   - voice       -> Gemini Live speech config (personas.VOICE_CARDS)
   - persona     -> agent instruction (personas.PERSONALITIES)
-  - superpowers -> ADK tools, every persona gets all of them (superpowers.py)
+  - superpowers -> ADK tools, a combination per persona (Persona.superpowers, superpowers.CATALOG)
   - the coach   -> also gets concede + the concession gate (stance.py, policy.py)
 
 `build_friend(voice, persona)` is what the server calls once per phone call.
@@ -54,7 +54,7 @@ def build_friend(voice: str, personality: str) -> tuple[Agent, RunConfig]:
         raise ValueError(f"unknown voice card {voice!r}")
     if personality not in PERSONALITIES:
         raise ValueError(f"unknown persona card {personality!r}")
-    tools = list(superpowers().values())
+    tools = superpowers(PERSONA_CARDS[personality].superpowers)
     if PERSONA_CARDS[personality].pyramid:
         tools.append(concede)
     agent = Agent(

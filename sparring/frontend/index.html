@@ -185,6 +185,10 @@
   .act .q { color: var(--muted); margin-top: 3px; }
   .act .r { margin-top: 4px; color: var(--ink); }
   .act .r.pending { color: var(--faint); font-style: italic; }
+  .mini { margin-top: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; animation: rise .35s ease; }
+  .mini-big { font-weight: 600; font-size: 14px; line-height: 1.4; margin-bottom: 6px; }
+  .mini-row { display: flex; gap: 8px; color: var(--muted); font-size: 12.5px; padding-top: 3px; }
+  .mini-row span { flex: 0 0 64px; font-family: var(--mono); font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; padding-top: 1px; }
   .act.ok .v { color: var(--ok); } .act.blocked .v { color: var(--no); font-weight: 600; }
 
   /* ---------- footer ---------- */
@@ -229,6 +233,34 @@
   .chip { white-space: nowrap; font-size: 13px; border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px 5px 10px; display: inline-flex; gap: 8px; align-items: baseline; }
   .chip .mono { font-size: 11.5px; color: var(--accent); }
   .chip.off { color: var(--faint); border-style: dashed; }
+  /* landscape end card: the Friend Card on the left, superpowers + tool activity on the right */
+  .card { max-width: 1080px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 40px; align-items: stretch; }
+  .card-l, .card-r { min-width: 0; }
+  .card-r { display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); padding-left: 40px; }
+  .card-r > .note:first-child { margin-top: 0; }
+  .card-r .calls { max-height: 46vh; overflow-y: auto; }
+  .card-r .made { margin-top: auto; }
+  .card-r .made + .actions { margin-top: 18px; }
+  @media (max-width: 860px) {
+    .card { grid-template-columns: 1fr; gap: 0; max-width: 560px; }
+    .card-r { border-left: 0; padding-left: 0; margin-top: 16px; }
+    .card-r .calls { max-height: none; }
+  }
+  .card-brand { margin: 0 0 22px; }
+  .card-brand-t { font-size: 26px; font-weight: 700; letter-spacing: -0.04em; }
+  .card-brand-s { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .friend.pending .name { color: var(--faint); font-size: 26px; }
+  .calls { list-style: none; margin: 8px 0 0; padding: 0; border-top: 1px solid var(--line); }
+  .calls li { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px dashed var(--line); font-size: 13px; line-height: 1.45; word-break: break-word; }
+  .calls li .t { flex: 0 0 44px; font-family: var(--mono); font-size: 11.5px; color: var(--faint); padding-top: 2px; }
+  .calls li code { font-family: var(--mono); font-size: 12.5px; color: var(--accent); }
+  .calls li .q { color: var(--muted); }
+  .calls li .r { color: var(--ink); margin-top: 2px; }
+  .calls li .ms { font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+  .calls li.blocked .r { color: var(--no); }
+  .calls li.none { color: var(--faint); }
+  .card .note > span em { font-style: normal; font-family: var(--mono); color: var(--faint); margin-left: 6px; }
+  .made { margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--line); font-family: var(--mono); font-size: 12px; color: var(--muted); }
   .card .actions { display: flex; gap: 12px; margin-top: 30px; flex-wrap: wrap; align-items: center; }
   .card .actions button.primary { margin-top: 0; }
   .card .idle { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--faint); }
@@ -356,7 +388,12 @@
 
   <div class="card-wrap" id="card" role="dialog" aria-modal="true" aria-labelledby="card-title">
     <div class="card">
-      <div class="friend" id="friend-card" hidden>
+     <div class="card-l">
+      <div class="card-brand">
+        <div class="card-brand-t">Build A Friend?</div>
+        <div class="card-brand-s">Conversational Voice Agents on Google ADK &amp; Gemini Live</div>
+      </div>
+      <div class="friend" id="friend-card">
         <img src="/assets/phone.png" alt="" />
         <div class="k"><span>Friend card</span><span class="mono">DevFest 2026</span></div>
         <div class="name" id="fc-name"></div>
@@ -374,12 +411,17 @@
         <div class="note good" id="card-good"></div>
         <div class="note fix" id="card-fix"></div>
       </div>
-      <div class="note"><span>Superpowers used</span><div class="chips" id="card-tools"></div></div>
+     </div>
+     <div class="card-r">
+      <div class="note"><span>Superpowers</span><div class="chips" id="card-tools"></div></div>
+      <div class="note"><span>Tool activity <em id="card-activity-count"></em></span><ol class="calls" id="card-activity"></ol></div>
+      <div class="made">DevFest 2026 &nbsp;·&nbsp; Built by Jean Tay</div>
       <div class="actions">
         <button class="primary" id="again" type="button">Next visitor</button>
         <button class="primary ghost" id="close" type="button">See the conversation</button>
         <span class="idle" id="idle"></span>
       </div>
+     </div>
     </div>
   </div>
 
